@@ -1,4 +1,4 @@
-import {installZip} from './zip.mjs';
+import {installZipCooperative} from './zip.mjs';
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
 export class PackManager {
   constructor(manifest, fs, progress=()=>{}) {
@@ -49,7 +49,7 @@ export class PackManager {
             if(digest!==meta.sha256) throw new Error(`SHA-256 mismatch for ${id}`);
           }
           this.progress(id,'unpacking',0);
-          const result=installZip(new Uint8Array(buffer),this.fs,packed=>globalThis.fflate.inflateSync(packed),
+          const result=await installZipCooperative(new Uint8Array(buffer),this.fs,packed=>globalThis.fflate.inflateSync(packed),
             (n,total)=>{if(n%12===0 || n===total)this.progress(id,'unpacking',n/total);});
           task.status='ready';
           this.progress(id,'ready',1);
