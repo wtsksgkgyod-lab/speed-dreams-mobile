@@ -15,7 +15,7 @@ import sys
 import time
 from contextlib import closing
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 def free_port():
     with closing(socket.socket()) as sock:
@@ -26,7 +26,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--web", type=pathlib.Path, default=pathlib.Path("web"))
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("tests/runtime-evidence"))
-    ap.add_argument("--timeout", type=int, default=150)
+    ap.add_argument("--timeout", type=int, default=210)
     ap.add_argument("--mode", choices=("menu","quickrace"), default="quickrace")
     args = ap.parse_args()
     web = args.web.resolve()
@@ -66,22 +66,35 @@ def main():
             start = time.monotonic()
             latest = ""
             until = start + args.timeout
+            last_heartbeat = start
             while time.monotonic() < until:
-                status = page.locator("#status-text").inner_text(timeout=3000)
-                if status != latest:
-                    latest = status
-                    report["status"].append({"elapsed_sec": round(time.monotonic()-start, 1), "text": status})
-                    print(f"Loading: {latest}", flush=True)
-                if page.locator("#boot").evaluate("(el) => el.hidden"):
-                    report["booted"] = True
-                    break
-                if "エラー:" in status or page.locator("#start").inner_text().startswith("RETRY"):
-                    break
-                page.wait_for_timeout(400)
+                # Large WebAssembly initialization and thousands of ZIP entries
+                # may occupy the renderer for several seconds. A single DOM
+                # read timeout must not be mistaken for a failed engine boot.
+                try:
+                    status = page.locator("#status-text").inner_text(timeout=12000)
+                    if status != latest:
+                        latest = status
+                        report["status"].append({"elapsed_sec": round(time.monotonic()-start, 1), "text": status})
+                        print(f"Loading: {latest}", flush=True)
+                    if page.locator("#boot").evaluate("(el) => el.hidden", timeout=12000):
+                        report["booted"] = True
+                        break
+                    if "エラー:" in status or page.locator("#start").inner_text(timeout=12000).startswith("RETRY"):
+                        break
+                except PlaywrightTimeoutError:
+                    if time.monotonic()-last_heartbeat >= 10:
+                        last_heartbeat=time.monotonic()
+                        print(f"Renderer busy after {round(last_heartbeat-start,1)}s; still probing actual WASM boot", flush=True)
+                    if page.is_closed():
+                        report["page_closed"] = True
+                        break
+                    continue
+                page.wait_for_timeout(450)
             report["elapsed_sec"] = round(time.monotonic() - start, 2)
             report["canvas"] = page.locator("#canvas").evaluate("(el)=>({width:el.width,height:el.height})")
             report["wasm_heap_info"] = page.evaluate("() => window.Module && window.Module.HEAPU8 ? window.Module.HEAPU8.byteLength : null")
-            page.screenshot(path=str(out / "02-result.png"))
+            page.screenshot(path=str(out / "02-result.png"), timeout=25000)
             if report["booted"] and args.mode == "quickrace":
                 # Probe vehicle response with a held virtual throttle. Software
                 # renderer timing can make this inconclusive; it is not a lap test.
