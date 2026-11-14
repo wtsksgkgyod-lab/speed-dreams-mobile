@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#080c13" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Speed Dreams Mobile: unofficial GPL-licensed WebAssembly adaptation of the original racing simulator." />
+  <link rel="stylesheet" href="./mobile.css" />
+  <title>Speed Dreams Mobile | Unofficial Web Port</title>
+</head>
+<body>
+  <main id="viewport">
+    <canvas id="canvas" tabindex="0" aria-label="Speed Dreams racing simulation"></canvas>
+    <section id="boot" class="boot" role="status" aria-live="polite">
+      <div class="boot-inner">
+        <div class="eyebrow">KUBOTA STUDIO / INDEPENDENT ADAPTATION</div>
+        <h1>SPEED <span>DREAMS</span></h1>
+        <p class="intro">原作の物理演算を、そのままスマートフォンに。</p>
+        <div class="track-line"><div id="progress-bar"></div></div>
+        <p id="status-text">データを確認中…</p>
+        <button id="start" type="button" disabled>ENGINE START <span>→</span></button>
+        <p id="boot-help">WebAssemblyとゲーム素材の読み込み後に開始できます。</p>
+      </div>
+    </section>
+    <div id="toolbar" hidden>
+      <div class="logo">SD<span>M</span> <small>UNOFFICIAL</small></div>
+      <div id="telemetry"><span id="speed">000</span><small>km/h</small><span id="gear">N</span></div>
+      <div class="tools">
+        <button id="manual" type="button" aria-label="Transmission">AT</button>
+        <button id="touch-toggle" type="button" aria-pressed="false">TOUCH OFF</button>
+        <button id="quality" type="button" aria-label="Rendering quality">AUTO</button>
+      </div>
+    </div>
+    <div id="touch-controls" hidden aria-label="Mobile driving controls">
+      <div id="steering-pad" class="steering-pad control" role="slider" aria-label="Steering" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0" tabindex="0">
+        <span class="steering-label">STEERING</span><div class="steering-track"><div id="steering-marker"></div></div>
+        <span class="steering-arrows">◀︎ <span>●</span> ▶︎</span>
+      </div>
+      <div id="shift-buttons" hidden>
+        <button class="shift control" type="button" data-shift="down" aria-label="Downshift">− <small>SHIFT</small></button>
+        <button class="shift control" type="button" data-shift="up" aria-label="Upshift">+ <small>SHIFT</small></button>
+      </div>
+      <div class="pedals">
+        <div id="brake" class="pedal brake control" role="slider" tabindex="0" aria-label="Brake" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="fill"></div><span>BRAKE</span></div>
+        <div id="throttle" class="pedal gas control" role="slider" tabindex="0" aria-label="Throttle" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="fill"></div><span>THROTTLE</span></div>
+      </div>
+    </div>
+    <div id="rotate-hint" hidden>↻ <span>横画面を推奨します</span></div>
+    <div id="toast" role="alert" hidden></div>
+    <details id="diagnostics" hidden><summary>DIAGNOSTICS</summary><pre id="diagnostic-data"></pre></details>
+    <footer id="footer" hidden>Unofficial independent derivative · Speed Dreams GPL-2.0-or-later · <a href="./notices.html" target="_blank" rel="noopener">Licenses &amp; source</a></footer>
+  </main>
+  <script src="./vendor/fflate.js"></script>
+  <script type="module" src="./mobile.mjs"></script>
+</body>
+</html>
