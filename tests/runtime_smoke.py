@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--web", type=pathlib.Path, default=pathlib.Path("web"))
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("tests/runtime-evidence"))
     ap.add_argument("--timeout", type=int, default=150)
+    ap.add_argument("--mode", choices=("menu","quickrace"), default="quickrace")
     args = ap.parse_args()
     web = args.web.resolve()
     out = args.out.resolve()
@@ -36,7 +37,7 @@ def main():
     port = free_port()
     address = f"http://127.0.0.1:{port}/"
     server = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(web)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    report = {"type": "headless Chromium WASM boot smoke (NOT real-device or driving QA)", "url": address, "browser": "chromium", "booted": False, "status": [], "console_errors": [], "page_errors": [], "failed_requests": [], "response_failures": [], "elapsed_sec": None}
+    report = {"type": "headless Chromium WASM boot smoke (NOT real-device or driving QA)", "url": address, "browser": "chromium", "booted": False, "status": [], "console_errors": [], "page_errors": [], "failed_requests": [], "response_failures": [], "elapsed_sec": None, "mode": args.mode, "throttle_probe_max_kph": None}
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=[
@@ -58,9 +59,10 @@ def main():
                     if time.monotonic() > deadline:
                         raise
                     time.sleep(0.2)
-            page.wait_for_function("document.getElementById(\'start\')?.disabled === false", timeout=15000)
+            button_id = "quick-race" if args.mode == "quickrace" else "start"
+            page.wait_for_function("(id) => document.getElementById(id)?.disabled === false", arg=button_id, timeout=15000)
             page.screenshot(path=str(out / "01-loading.png"))
-            page.locator("#start").click()
+            page.locator("#" + button_id).click()
             start = time.monotonic()
             latest = ""
             until = start + args.timeout
@@ -80,6 +82,28 @@ def main():
             report["canvas"] = page.locator("#canvas").evaluate("(el)=>({width:el.width,height:el.height})")
             report["wasm_heap_info"] = page.evaluate("() => window.Module && window.Module.HEAPU8 ? window.Module.HEAPU8.byteLength : null")
             page.screenshot(path=str(out / "02-result.png"))
+            if report["booted"] and args.mode == "quickrace":
+                # Probe vehicle response with a held virtual throttle. Software
+                # renderer timing can make this inconclusive; it is not a lap test.
+                page.wait_for_timeout(12000)
+                pedal = page.locator("#throttle")
+                if pedal.is_visible():
+                    rect = pedal.bounding_box()
+                    if rect:
+                        page.mouse.move(rect["x"] + rect["width"]/2, rect["y"] + rect["height"]*.1)
+                        page.mouse.down()
+                        top_speed = 0
+                        try:
+                            for _ in range(22):
+                                page.wait_for_timeout(500)
+                                raw = page.locator("#speed").inner_text()
+                                try: top_speed=max(top_speed, int(raw))
+                                except ValueError: pass
+                        finally:
+                            page.mouse.up()
+                        report["throttle_probe_max_kph"] = top_speed
+                        print(f"Headless throttle probe max speed: {top_speed} km/h (not a lap test)", flush=True)
+                        page.screenshot(path=str(out / "03-after-throttle.png"))
             (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
             context.close()
             browser.close()

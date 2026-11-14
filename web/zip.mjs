@@ -6,13 +6,18 @@ const MAX_FILE = 96 * 1024 * 1024;
 const MAX_TOTAL = 700 * 1024 * 1024;
 const decoder = new TextDecoder('utf-8', {fatal:true});
 
+// Table-driven CRC avoids eight bit-operations per byte on large 88MB packs.
+// Still validates exactly the original ZIP CRC-32 before writing to WASM FS.
+const CRC_TABLE = new Uint32Array(256);
+for (let n=0; n<256; n++) {
+  let c=n;
+  for (let bit=0;bit<8;bit++) c=(c>>>1)^(c&1 ? 0xedb88320:0);
+  CRC_TABLE[n]=c>>>0;
+}
 function crc32(bytes) {
-  let crc = -1;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i=0;i<8;i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ -1) >>> 0;
+  let crc=0xffffffff;
+  for (let i=0;i<bytes.length;i++) crc=CRC_TABLE[(crc^bytes[i])&255]^(crc>>>8);
+  return (crc^0xffffffff)>>>0;
 }
 export function normalizeZipPath(path) {
   // Reject absolute, traversal, Windows, Unicode null and special device paths.
