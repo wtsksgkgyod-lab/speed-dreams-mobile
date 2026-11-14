@@ -6,18 +6,13 @@ const MAX_FILE = 96 * 1024 * 1024;
 const MAX_TOTAL = 700 * 1024 * 1024;
 const decoder = new TextDecoder('utf-8', {fatal:true});
 
-// Table-driven CRC avoids eight bit-operations per byte on large 88MB packs.
-// Still validates exactly the original ZIP CRC-32 before writing to WASM FS.
-const CRC_TABLE = new Uint32Array(256);
-for (let n=0; n<256; n++) {
-  let c=n;
-  for (let bit=0;bit<8;bit++) c=(c>>>1)^(c&1 ? 0xedb88320:0);
-  CRC_TABLE[n]=c>>>0;
-}
 function crc32(bytes) {
-  let crc=0xffffffff;
-  for (let i=0;i<bytes.length;i++) crc=CRC_TABLE[(crc^bytes[i])&255]^(crc>>>8);
-  return (crc^0xffffffff)>>>0;
+  let crc = -1;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let i=0;i<8;i++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+  }
+  return (crc ^ -1) >>> 0;
 }
 export function normalizeZipPath(path) {
   // Reject absolute, traversal, Windows, Unicode null and special device paths.
@@ -27,7 +22,7 @@ export function normalizeZipPath(path) {
   return path;
 }
 
-function* installZipSteps(bytes, FS, inflateRaw, onFile) {
+export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
   if (!(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
@@ -69,26 +64,6 @@ function* installZipSteps(bytes, FS, inflateRaw, onFile) {
     FS.writeFile(destination,data);
     installed++;
     onFile(installed,entries.length,entry.safe);
-    yield installed; // Enables cooperative batch processing without duplicating validation.
   }
   return { installed, unpackedBytes: total };
-}
-
-// Synchronous API retained for compatibility and existing test fixtures.
-export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
-  const iterator=installZipSteps(bytes,FS,inflateRaw,onFile);
-  for(;;){const step=iterator.next();if(step.done)return step.value;}
-}
-
-// Original Speed Dreams packs can contain thousands of entries. Yield after
-// small batches so UI/paint events are serviced during the large initial load.
-export async function installZipCooperative(bytes, FS, inflateRaw, onFile=()=>{}, batchSize=24) {
-  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1024) throw new Error('Invalid batch size');
-  const iterator=installZipSteps(bytes,FS,inflateRaw,onFile);
-  let written=0;
-  for(;;){
-    const step=iterator.next();
-    if(step.done)return step.value;
-    if(++written%batchSize===0)await new Promise(resolve=>setTimeout(resolve,0));
-  }
 }

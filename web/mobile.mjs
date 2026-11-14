@@ -21,7 +21,6 @@ function showError(error) {
   if(native) try{native.release();}catch{}
   $('start').disabled=false;
   $('start').textContent='RETRY / RELOAD';
-  $('quick-race').disabled=true;
   $('boot').hidden=false;
   $('boot-help').textContent='復旧できない場合はページを再読み込みしてください。ゲーム本体が未インストールの場合はREADMEのビルド手順を確認。';
   message(`エラー: ${error?.message||error}`);
@@ -119,18 +118,6 @@ for(const button of document.querySelectorAll('[data-shift]')){
   });
   for(const ev of ['pointerup','pointercancel','lostpointercapture'])button.addEventListener(ev,()=>{button.style.background='';});
 }
-async function retryAssets() {
-  if(!packManager) return;
-  $('retry-assets').disabled=true;
-  toast('失敗したデータを再ダウンロードしています…');
-  const outcomes=await packManager.retryFailed();
-  const failures=outcomes.filter(o=>o.status==='rejected');
-  $('retry-assets').hidden=failures.length===0;
-  $('retry-assets').disabled=false;
-  toast(failures.length ? '再取得に失敗しました。通信を確認してRETRY DATAを押してください。' : 'データの再取得が完了しました。', failures.length>0);
-}
-$('retry-assets').addEventListener('click',retryAssets);
-
 function toggleTouch(enabled) {
   state.enabled=!!enabled;
   if(!enabled) resetInput();
@@ -208,9 +195,8 @@ function instrumentationFrame(time) {
 requestAnimationFrame(instrumentationFrame);
 setInterval(updateHUD,160);
 
-async function start(mode='menu') {
+async function start() {
   $('start').disabled=true;
-  $('quick-race').disabled=true;
   $('start').textContent='STARTING…';
   try {
     if(!globalThis.WebAssembly)throw new Error('WebAssembly is not supported by this browser');
@@ -245,12 +231,7 @@ async function start(mode='menu') {
     for(const dir of ['/data','/lib','/home/web_user/.speed-dreams-2'])FS.mkdirTree(dir);
     packManager=new PackManager(manifest,FS,(id,phase,ratio,error)=>{
       if(id==='start')setProgress(.25+ratio*.68);
-      if(phase==='failed') {
-        $('retry-assets').hidden=false;
-        toast(`${id}: ${error?.message||'download failed'} — RETRY DATAで再試行`,true);
-      } else if (phase==='ready' && packManager?.failedIds().length===0) {
-        $('retry-assets').hidden=true;
-      }
+      if(phase==='failed')toast(`${id}: ${error?.message||'download failed'}`,true);
       else if(phase==='fetching')message(`${id} をダウンロードしています`);
       else if(phase==='unpacking')message(`${id} を展開しています ${Math.round(ratio*100)}%`);
       else if(phase==='ready')message(`${id} の読み込み完了`);
@@ -262,35 +243,24 @@ async function start(mode='menu') {
     setProgress(.97);message('オリジナルシミュレーターを起動中');
     // The original Speed Dreams GfApplication supports these official CLI flags.
     // SDL's Emscripten main loop deliberately unwinds instead of returning.
-    const args=['-dd','/data','-ld','/lib','-lc','/home/web_user/.speed-dreams-2'];
-    // The original main.cpp explicitly supports -s/--startrace. This bypasses
-    // mouse-heavy native menus and starts the preserved Quick Race config.
-    if(mode==='quickrace')args.push('-s','quickrace');
-    try {wasmModule.callMain(args);}
+    try {wasmModule.callMain(['-dd','/data','-ld','/lib','-lc','/home/web_user/.speed-dreams-2']);}
     catch(e){if(String(e)!=='unwind' && e?.message!=='unwind')throw e;}
     engineStarted=true;
-    if(mode==='quickrace')toggleTouch(true);
-    else native.enable(0);
-    resizeCanvas();setProgress(1);
+    native.enable(0);resizeCanvas();setProgress(1);
     $('boot').hidden=true;$('toolbar').hidden=false;$('footer').hidden=false;
     if(debug)$('diagnostics').hidden=false;
     canvas.focus();checkOrientation();
-    toast(mode==='quickrace'?'Quick Race開始。必要な車・コースを読み込んでいます。':'ゲーム内のメニューでレースを開始し、走行中は TOUCH ON を押してください。');
+    toast('ゲーム内のメニューでレースを開始し、走行中は TOUCH ON を押してください。');
   }catch(error){showError(error);}
 }
 $('start').addEventListener('click',()=>{
-  if(engineStarted||wasmModule){location.reload();return;}
+  if(engineStarted){location.reload();return;}
   // This click is the required user gesture to unlock browser audio APIs.
-  start('menu');
-});
-$('quick-race').addEventListener('click',()=>{
-  if(engineStarted||wasmModule){location.reload();return;}
-  start('quickrace');
+  start();
 });
 async function prepare() {
   $('start').disabled=false;
-  $('start').textContent='OPEN SIMULATOR →';
-  $('quick-race').disabled=false;
+  $('start').textContent='ENGINE START →';
   message('エンジンの準備ができました。初回はデータの読み込みが発生します。');
   if(debug)$('diagnostics').hidden=false;
   checkOrientation();

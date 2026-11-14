@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {installZip,installZipCooperative,normalizeZipPath} from '../web/zip.mjs';
+import {installZip,normalizeZipPath} from '../web/zip.mjs';
 
 // Tiny valid STORE ZIP fixture generator; tests parser without external modules.
 function crc32(bytes){let c=-1;for(const b of bytes){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(c&1?0xedb88320:0)}return(c^-1)>>>0}
@@ -31,17 +31,4 @@ test('reject traversal and unexpected asset roots',()=>{
 test('reject ZIP with corrupt CRC',()=>{
   const z=zip('data/a.txt','hello');z[30+'data/a.txt'.length]^=0xff; // flip first payload byte
   assert.throws(()=>installZip(z,fakeFS(),()=>{}),/corrupted|directory|truncated/);
-});
-
-test('cooperative ZIP extraction matches sync installation and reports progress',async()=>{
-  const fs=fakeFS(),updates=[];
-  const result=await installZipCooperative(zip('data/config/test.xml','original-game-config'),fs,()=>{throw new Error('STORE must not inflate')},(n,total,name)=>updates.push([n,total,name]),1);
-  assert.equal(result.installed,1);
-  assert.equal(fs.files.get('/data/config/test.xml'),'original-game-config');
-  assert.deepEqual(updates,[[1,1,'data/config/test.xml']]);
-});
-test('cooperative ZIP extraction rejects corrupt payloads',async()=>{
-  const bytes=zip('data/a.txt','hello');
-  bytes[30+'data/a.txt'.length]^=0xff;
-  await assert.rejects(()=>installZipCooperative(bytes,fakeFS(),()=>{},()=>{},1),/corrupted|directory|truncated/);
 });
