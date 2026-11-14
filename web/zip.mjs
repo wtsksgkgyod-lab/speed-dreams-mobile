@@ -27,7 +27,7 @@ export function normalizeZipPath(path) {
   return path;
 }
 
-export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
+function* installZipSteps(bytes, FS, inflateRaw, onFile) {
   if (!(bytes instanceof Uint8Array)) bytes = new Uint8Array(bytes);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
@@ -69,6 +69,26 @@ export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
     FS.writeFile(destination,data);
     installed++;
     onFile(installed,entries.length,entry.safe);
+    yield installed; // Enables cooperative batch processing without duplicating validation.
   }
   return { installed, unpackedBytes: total };
+}
+
+// Synchronous API retained for compatibility and existing test fixtures.
+export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
+  const iterator=installZipSteps(bytes,FS,inflateRaw,onFile);
+  for(;;){const step=iterator.next();if(step.done)return step.value;}
+}
+
+// Original Speed Dreams packs can contain thousands of entries. Yield after
+// small batches so UI/paint events are serviced during the large initial load.
+export async function installZipCooperative(bytes, FS, inflateRaw, onFile=()=>{}, batchSize=24) {
+  if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1024) throw new Error('Invalid batch size');
+  const iterator=installZipSteps(bytes,FS,inflateRaw,onFile);
+  let written=0;
+  for(;;){
+    const step=iterator.next();
+    if(step.done)return step.value;
+    if(++written%batchSize===0)await new Promise(resolve=>setTimeout(resolve,0));
+  }
 }
