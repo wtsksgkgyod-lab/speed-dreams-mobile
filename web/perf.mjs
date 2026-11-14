@@ -38,9 +38,9 @@ export class AdaptiveResolution {
     if(now-this.lastChange<9000)return null;
     if(this.low>=6&&this.scale>.65) {
       this.scale=Math.max(.65,Math.round((this.scale-.06)*100)/100);
-    } else if(this.high>=12&&this.scale<.95) {
-      this.scale=Math.min(.95,Math.round((this.scale+.03)*100)/100);
     } else return null;
+    // Page RAF can stay at 60 Hz even while the simulator renders slowly.
+    // Do NOT upscale automatically on this proxy; HIGH remains user-selectable.
     this.lastChange=now;
     this.low=0;this.high=0;
     return this.scale;
