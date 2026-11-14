@@ -42,13 +42,12 @@ test('auto resolution avoids thrashing on one-off slow frames',()=>{
   gov.update({fps:20,now:20000});
   assert.equal(gov.scale,.66); // sustained pressure after the 9s cooldown
 });
-test('quality recovery requires 12 sustained high-FPS windows and visibility',()=>{
+test('unreliable page RAF does not automatically upscale actual simulator rendering',()=>{
   const gov=new AdaptiveResolution(.75);
-  for(let i=0;i<10;i++)assert.equal(gov.update({fps:60,now:1000*i}),null);
-  gov.update({fps:0,now:10000,active:false});
-  for(let i=0;i<11;i++)gov.update({fps:60,now:11000+i*1000});
+  for(let i=0;i<35;i++)assert.equal(gov.update({fps:60,now:1000*i}),null);
   assert.equal(gov.scale,.75);
-  assert.equal(gov.update({fps:60,now:22000}),.78);
+  gov.update({fps:0,now:35000,active:false});
+  assert.equal(gov.scale,.75);
 });
 test('frame proxy stats expose p95 without claiming GPU timing',()=>{
   const data=[12,15,17,16,40];
