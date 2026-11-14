@@ -11,6 +11,12 @@ export class PackManager {
       for(const dir of dirs) this.rootByPack.set(dir,id);
     }
   }
+  failedIds() {
+    return Array.from(this.states, ([id, task]) => task.status==='failed' ? id : null).filter(Boolean);
+  }
+  async retryFailed() {
+    return Promise.allSettled(this.failedIds().map(id=>this.load(id,true)));
+  }
   resolve(directory) {
     for(const [root,id] of this.rootByPack) if(directory===root||directory.startsWith(root+'/')) return id;
     return null;
