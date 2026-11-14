@@ -87,12 +87,21 @@ jobs:
           "$RUNNER_TEMP/sd-browser/bin/pip" install --disable-pip-version-check "playwright==1.56.0"
           "$RUNNER_TEMP/sd-browser/bin/python" -m playwright install chromium
           "$RUNNER_TEMP/sd-browser/bin/python" tests/runtime_smoke.py --web web --out tests/runtime-evidence --timeout 150
+      - name: Probe actual Quick Race car acceleration (headless, not phone QA)
+        id: quickrace_smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/sd-browser/bin/python" tests/runtime_smoke.py --web web --out tests/runtime-evidence-quickrace --mode quickrace --timeout 210 --require-throttle
       - name: Upload real-WASM browser diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: speed-dreams-mobile-browser-evidence
-          path: tests/runtime-evidence
+          path: |
+            tests/runtime-evidence/
+            tests/runtime-evidence-quickrace/
           retention-days: 14
           if-no-files-found: warn
       - name: Report browser boot result (not real-phone QA)
@@ -100,6 +109,7 @@ jobs:
         shell: bash
         run: |
           echo "Headless Chromium WASM boot: ${{ steps.browser_smoke.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Original Quick Race throttle probe: ${{ steps.quickrace_smoke.outcome }}" >> "$GITHUB_STEP_SUMMARY"
           echo "This is not iPhone/Android or actual lap-driving verification." >> "$GITHUB_STEP_SUMMARY"
       - name: Check GitHub Pages site budget
         id: pages_size

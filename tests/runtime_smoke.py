@@ -28,6 +28,7 @@ def main():
     ap.add_argument("--out", type=pathlib.Path, default=pathlib.Path("tests/runtime-evidence"))
     ap.add_argument("--timeout", type=int, default=210)
     ap.add_argument("--mode", choices=("menu","quickrace"), default="menu")
+    ap.add_argument("--require-throttle", action="store_true", help="Quick Race must show physical car speed > 2 km/h")
     args = ap.parse_args()
     web = args.web.resolve()
     out = args.out.resolve()
@@ -101,6 +102,11 @@ def main():
             report["canvas"] = page.locator("#canvas").evaluate("(el)=>({width:el.width,height:el.height})")
             report["wasm_heap_info"] = page.evaluate("() => window.Module && window.Module.HEAPU8 ? window.Module.HEAPU8.byteLength : null")
             page.screenshot(path=str(out / "02-result.png"), timeout=25000)
+            if report["booted"]:
+                try:
+                    report["diagnostic_hud"] = page.locator("#diagnostic-data").inner_text(timeout=2000)[:4000]
+                except Exception:
+                    report["diagnostic_hud"] = None
             if report["booted"] and report["mode_effective"] == "quickrace":
                 # Probe vehicle response with a held virtual throttle. Software
                 # renderer timing can make this inconclusive; it is not a lap test.
@@ -137,6 +143,9 @@ def main():
             server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server.kill()
+    if args.require_throttle and (report["mode_effective"] != "quickrace" or (report["throttle_probe_max_kph"] or 0) <= 2):
+        print("FAIL: Original Quick Race did not verify throttle-driven vehicle motion in headless Chromium", file=sys.stderr)
+        return 1
     if report["booted"]:
         print("PASS: Actual WASM runtime reached its in-game UI in headless desktop Chromium; racing, steering and phones remain UNTESTED" if report["mode_effective"] == "menu" else "PASS: Actual WASM runtime reached its in-game UI; Quick Race throttle is only a limited headless probe")
         return 0
