@@ -201,7 +201,8 @@ function instrumentationFrame(time) {
     const sampled=frameStats(frameSample);
     if(debug){
       const heap=wasmModule?.HEAPU8?.buffer?.byteLength;
-      $('diagnostic-data').textContent=`Page RAF proxy: ${fps} fps\nRAF mean/p95: ${sampled.meanMs.toFixed(1)}/${sampled.p95Ms.toFixed(1)} ms\nWASM heap: ${heap?Math.round(heap/1048576)+' MiB':'unavailable'}\nViewport: ${canvas.width}x${canvas.height}\nScale: ${renderScale}\nNative sends / deduped: ${publisher?.transfers??0} / ${publisher?.skips??0}\nJS heap (Chromium only): ${performance.memory?.usedJSHeapSize?Math.round(performance.memory.usedJSHeapSize/1048576)+' MiB':'unavailable'}\nNot GPU FPS; not phone benchmarking.`;
+      const packInfo=(packManager?.getMetrics()??[]).map(p=>`${p.id}: ${(p.bytes/1048576).toFixed(1)} MiB, net:${p.fetchMs}ms hash:${p.integrityMs}ms install:${p.installMs}ms`).join('\n');
+      $('diagnostic-data').textContent=`Page RAF proxy: ${fps} fps\nRAF mean/p95: ${sampled.meanMs.toFixed(1)}/${sampled.p95Ms.toFixed(1)} ms\nWASM heap: ${heap?Math.round(heap/1048576)+' MiB':'unavailable'}\nViewport: ${canvas.width}x${canvas.height}\nScale: ${renderScale}\nNative sends / deduped: ${publisher?.transfers??0} / ${publisher?.skips??0}\nJS heap (Chromium only): ${performance.memory?.usedJSHeapSize?Math.round(performance.memory.usedJSHeapSize/1048576)+' MiB':'unavailable'}\nAsset loading (sequential on touch):\n${packInfo}\nNot GPU FPS; not phone benchmarking.`;
     }
     const proposed=resolutionGovernor.update({fps,now:time,active:engineStarted&&!document.hidden&&qualityMode==='auto'&&frameSample.length>120});
     if(proposed!==null){renderScale=proposed;resizeCanvas();}
@@ -260,7 +261,7 @@ async function start(mode='menu') {
       else if(phase==='fetching')message(`${id} をダウンロードしています`);
       else if(phase==='unpacking')message(`${id} を展開しています ${Math.round(ratio*100)}%`);
       else if(phase==='ready')message(`${id} の読み込み完了`);
-    });
+    },{maxConcurrent:smallTouchScreen?1:2});
     wasmModule.wgDataReady = directory => packManager.isReady(directory)?1:0;
     await packManager.load('start');
     // Retain upstream menu/race music from its separate original asset pack.
