@@ -20,6 +20,7 @@ function showError(error) {
   state.releaseAll();
   if(native) try{native.release();}catch{}
   $('start').disabled=false;
+  $('quick-race').disabled=true;
   $('start').textContent='RETRY / RELOAD';
   $('boot').hidden=false;
   $('boot-help').textContent='復旧できない場合はページを再読み込みしてください。ゲーム本体が未インストールの場合はREADMEのビルド手順を確認。';
@@ -195,7 +196,8 @@ function instrumentationFrame(time) {
 requestAnimationFrame(instrumentationFrame);
 setInterval(updateHUD,160);
 
-async function start() {
+async function start(quickRace=false) {
+  $('quick-race').disabled=true;
   $('start').disabled=true;
   $('start').textContent='STARTING…';
   try {
@@ -243,10 +245,14 @@ async function start() {
     setProgress(.97);message('オリジナルシミュレーターを起動中');
     // The original Speed Dreams GfApplication supports these official CLI flags.
     // SDL's Emscripten main loop deliberately unwinds instead of returning.
-    try {wasmModule.callMain(['-dd','/data','-ld','/lib','-lc','/home/web_user/.speed-dreams-2']);}
+    const args=['-dd','/data','-ld','/lib','-lc','/home/web_user/.speed-dreams-2'];
+    // -s / --startrace is an original Speed Dreams CLI feature, not a replacement racing mode.
+    if(quickRace)args.push('-s','quickrace');
+    try {wasmModule.callMain(args);}
     catch(e){if(String(e)!=='unwind' && e?.message!=='unwind')throw e;}
     engineStarted=true;
     native.enable(0);resizeCanvas();setProgress(1);
+    if(quickRace && ('ontouchstart' in window || navigator.maxTouchPoints>0))toggleTouch(true);
     $('boot').hidden=true;$('toolbar').hidden=false;$('footer').hidden=false;
     if(debug)$('diagnostics').hidden=false;
     canvas.focus();checkOrientation();
@@ -256,10 +262,14 @@ async function start() {
 $('start').addEventListener('click',()=>{
   if(engineStarted){location.reload();return;}
   // This click is the required user gesture to unlock browser audio APIs.
-  start();
+  start(false);
+});
+$('quick-race').addEventListener('click',()=>{
+  if(!engineStarted)start(true);
 });
 async function prepare() {
   $('start').disabled=false;
+  $('quick-race').disabled=false;
   $('start').textContent='ENGINE START →';
   message('エンジンの準備ができました。初回はデータの読み込みが発生します。');
   if(debug)$('diagnostics').hidden=false;
