@@ -40,6 +40,7 @@ function* installZipSteps(bytes, FS, inflateRaw, onFile) {
   if (count>15000 || start>=bytes.length) throw new Error('Invalid ZIP directory');
   let pos=start,total=0,installed=0;
   const entries=[];
+  const createdFolders=new Set();
   for(let n=0;n<count;n++) {
     if(pos+46>bytes.length || u32(view,pos)!==0x02014b50) throw new Error('Malformed ZIP central directory');
     const flags=u16(view,pos+8), method=u16(view,pos+10), expectedCrc=u32(view,pos+16);
@@ -65,7 +66,10 @@ function* installZipSteps(bytes, FS, inflateRaw, onFile) {
     const destination=entry.safe.startsWith('seed/')
       ? '/home/web_user/.speed-dreams-2/'+entry.safe.slice(5)
       : '/'+entry.safe;
-    FS.mkdirTree(destination.slice(0,destination.lastIndexOf('/')));
+    const folder=destination.slice(0,destination.lastIndexOf('/'));
+    // Source archives have thousands of sibling assets. Emscripten MEMFS
+    // mkdirTree traverses parents; once per unique folder is sufficient.
+    if(!createdFolders.has(folder)){FS.mkdirTree(folder);createdFolders.add(folder);}
     FS.writeFile(destination,data);
     installed++;
     onFile(installed,entries.length,entry.safe);
@@ -85,10 +89,15 @@ export function installZip(bytes, FS, inflateRaw, onFile=()=>{}) {
 export async function installZipCooperative(bytes, FS, inflateRaw, onFile=()=>{}, batchSize=24) {
   if(!Number.isInteger(batchSize)||batchSize<1||batchSize>1024) throw new Error('Invalid batch size');
   const iterator=installZipSteps(bytes,FS,inflateRaw,onFile);
-  let written=0;
+  let written=0,lastYield=performance.now();
   for(;;){
     const step=iterator.next();
     if(step.done)return step.value;
-    if(++written%batchSize===0)await new Promise(resolve=>setTimeout(resolve,0));
+    // Bound batches by count AND elapsed time. Large textures in one batch
+    // should not starve touch input / progress updates longer than necessary.
+    if(++written%batchSize===0 || performance.now()-lastYield>=8) {
+      await new Promise(resolve=>setTimeout(resolve,0));
+      lastYield=performance.now();
+    }
   }
 }

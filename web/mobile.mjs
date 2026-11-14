@@ -1,5 +1,6 @@
 import { MobileControls, PointerOwnership, clamp } from './core.mjs';
 import { PackManager } from './packs.mjs';
+import {InputPublisher, AdaptiveResolution, initialRenderScale, frameStats} from './perf.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('canvas');
@@ -7,9 +8,13 @@ const state = new MobileControls();
 const owners = new PointerOwnership(state);
 const params = new URLSearchParams(location.search);
 const debug = params.get('debug') === '1';
-const QUALITY = [0.7, 0.85, 1.0];
-let wasmModule=null, packManager=null, native=null, engineStarted=false;
-let renderScale=0.85, qualityMode='auto', lastFrame=performance.now();
+const QUALITY = [0.68, 0.78, 1.0];
+const smallTouchScreen=(navigator.maxTouchPoints||0)>0 && Math.min(innerWidth,innerHeight)<550;
+const memoryGiB=Number.isFinite(navigator.deviceMemory)?navigator.deviceMemory:null;
+let wasmModule=null, packManager=null, native=null, publisher=null, engineStarted=false;
+let renderScale=initialRenderScale({touch:smallTouchScreen,width:Math.max(innerWidth,innerHeight),memoryGiB});
+const resolutionGovernor=new AdaptiveResolution(renderScale);
+let qualityMode='auto', lastFrame=performance.now();
 let totalFrames=0, secondFrames=0, secondStart=performance.now();
 let frameSample=[], fps=0, toastTimeout;
 let orientation=window.innerWidth>window.innerHeight?'landscape':'portrait';
@@ -42,10 +47,10 @@ function checkOrientation() {
 }
 function getCanvasSize() {
   const w=Math.max(1,canvas.clientWidth),h=Math.max(1,canvas.clientHeight);
-  const pixelRatio=Math.min(1.7,devicePixelRatio||1);
+  const pixelRatio=Math.min(smallTouchScreen&&qualityMode!=='high'?1.55:1.7,devicePixelRatio||1);
   let actualW=Math.min(1280,Math.round(w*pixelRatio*renderScale));
   let actualH=Math.min(800,Math.round(h*pixelRatio*renderScale));
-  const pixelCap=1024000;
+  const pixelCap=smallTouchScreen&&qualityMode!=='high'?760000:1024000;
   if(actualW*actualH>pixelCap){const k=Math.sqrt(pixelCap/(actualW*actualH));actualW=Math.round(actualW*k);actualH=Math.round(actualH*k);}
   return [Math.max(320,actualW),Math.max(180,actualH)];
 }
@@ -56,9 +61,9 @@ function resizeCanvas(){
   if (native?.resize && engineStarted) try{native.resize(w,h);}catch(e){console.warn('Resize not yet possible',e);}
 }
 
-function flushControls() {
-  if(native && engineStarted)try {
-    native.set(...state.snapshot());
+function flushControls(force=false) {
+  if(publisher && engineStarted)try {
+    publisher.publish(state.snapshot(),force);
   }catch(e){console.error('Native input bridge',e);}
 }
 function resetInput(){
@@ -66,7 +71,8 @@ function resetInput(){
   $('steering-marker').style.left='50%';
   for(const id of ['throttle','brake'])$(id).querySelector('.fill').style.height='0%';
   for(const el of document.querySelectorAll('[aria-valuenow]'))el.setAttribute('aria-valuenow','0');
-  flushControls();if(native)try{native.release();}catch{}
+  flushControls(true);if(native)try{native.release();}catch{}
+  if(publisher)publisher.reset();
 }
 window.addEventListener('blur',resetInput);
 window.addEventListener('pagehide',resetInput);
@@ -76,9 +82,10 @@ canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();showError(new 
 canvas.addEventListener('webglcontextrestored',()=>toast('WebGLが復旧しました。レースを続ける場合は再読み込みを推奨します。',true));
 
 function attachAxis(el,axis,compute) {
+  let activeRect=null;
   const update = event => {
     if(!owners.owns(axis,event.pointerId))return;
-    const value=compute(el.getBoundingClientRect(),event);
+    const value=compute(activeRect||el.getBoundingClientRect(),event);
     state.setAxis(axis,value);
     el.setAttribute('aria-valuenow',Math.round(value*100));
     if(axis==='steering') $('steering-marker').style.left=`${(value+1)*50}%`;
@@ -87,11 +94,12 @@ function attachAxis(el,axis,compute) {
   };
   el.addEventListener('pointerdown',e=>{
     if(!state.enabled || !owners.acquire(axis,e.pointerId))return;
-    e.preventDefault();el.setPointerCapture(e.pointerId);update(e);
+    e.preventDefault();activeRect=el.getBoundingClientRect();el.setPointerCapture(e.pointerId);update(e);
   });
   el.addEventListener('pointermove',e=>{if(owners.owns(axis,e.pointerId)){e.preventDefault();update(e);}});
   const release=e=>{
     if(owners.release(axis,e.pointerId)){
+      activeRect=null;
       if(axis==='steering')$('steering-marker').style.left='50%';
       else el.querySelector('.fill').style.height='0%';
       el.setAttribute('aria-valuenow','0');flushControls();
@@ -151,7 +159,8 @@ $('manual').addEventListener('click',()=>{
 });
 $('quality').addEventListener('click',()=>{
   qualityMode=qualityMode==='auto'?'low':qualityMode==='low'?'high':'auto';
-  renderScale=qualityMode==='low'?QUALITY[0]:qualityMode==='high'?QUALITY[2]:QUALITY[1];
+  renderScale=qualityMode==='low'?QUALITY[0]:qualityMode==='high'?QUALITY[2]:initialRenderScale({touch:smallTouchScreen,width:Math.max(innerWidth,innerHeight),memoryGiB});
+  resolutionGovernor.setScale(renderScale);
   $('quality').textContent=qualityMode.toUpperCase();resizeCanvas();
   toast(`描画品質: ${qualityMode.toUpperCase()}。物理演算の精度は変更しません。`);
 });
@@ -184,25 +193,22 @@ function updateHUD() {
   }catch(e){console.warn('HUD unavailable',e);}
 }
 function instrumentationFrame(time) {
-  const delta=Math.min(300,time-lastFrame);
-  frameSample.push(delta);if(frameSample.length>180)frameSample.shift();
+  const delta=Math.max(0,time-lastFrame);
+  if(delta>0&&delta<3000){frameSample.push(delta);if(frameSample.length>180)frameSample.shift();}
   totalFrames++;secondFrames++;lastFrame=time;
   if(time-secondStart>1000){
     fps=Math.round(secondFrames*1000/(time-secondStart));
-    const mean=frameSample.reduce((a,b)=>a+b,0)/Math.max(1,frameSample.length);
+    const sampled=frameStats(frameSample);
     if(debug){
       const heap=wasmModule?.HEAPU8?.buffer?.byteLength;
-      $('diagnostic-data').textContent=`FPS (page RAF): ${fps}\nFrame mean: ${mean.toFixed(1)} ms\nWASM heap: ${heap?Math.round(heap/1048576)+' MiB':'unavailable'}\nViewport: ${canvas.width}x${canvas.height}\nScale: ${renderScale}\nFrames: ${totalFrames}`;
+      const packInfo=(packManager?.getMetrics()??[]).map(p=>`${p.id}: ${(p.bytes/1048576).toFixed(1)} MiB, net:${p.fetchMs}ms hash:${p.integrityMs}ms install:${p.installMs}ms`).join('\n');
+      $('diagnostic-data').textContent=`Page RAF proxy: ${fps} fps\nRAF mean/p95: ${sampled.meanMs.toFixed(1)}/${sampled.p95Ms.toFixed(1)} ms\nWASM heap: ${heap?Math.round(heap/1048576)+' MiB':'unavailable'}\nViewport: ${canvas.width}x${canvas.height}\nScale: ${renderScale}\nNative sends / deduped: ${publisher?.transfers??0} / ${publisher?.skips??0}\nJS heap (Chromium only): ${performance.memory?.usedJSHeapSize?Math.round(performance.memory.usedJSHeapSize/1048576)+' MiB':'unavailable'}\nAsset loading (sequential on touch):\n${packInfo}\nNot GPU FPS; not phone benchmarking.`;
     }
-    if(engineStarted&&qualityMode==='auto'&&frameSample.length>120){
-      // Conservative, debounced. RAF FPS is only a proxy; not a GPU frame-time test.
-      if(fps<25 && renderScale>0.65)renderScale=Math.max(.65,renderScale-.07);
-      else if(fps>55 && renderScale<1.0)renderScale=Math.min(1,renderScale+.04);
-      resizeCanvas();
-    }
+    const proposed=resolutionGovernor.update({fps,now:time,active:engineStarted&&!document.hidden&&qualityMode==='auto'&&frameSample.length>120});
+    if(proposed!==null){renderScale=proposed;resizeCanvas();}
     secondFrames=0;secondStart=time;
   }
-  flushControls();
+  // Input events publish immediately. Avoid one redundant C++/WASM call on every RAF.
   requestAnimationFrame(instrumentationFrame);
 }
 requestAnimationFrame(instrumentationFrame);
@@ -241,6 +247,7 @@ async function start(mode='menu') {
     await loadScript(manifest.runtime.js);
     wasmModule=await runtimeReady;
     native=buildNativeAPI(wasmModule);
+    publisher=new InputPublisher((...values)=>native.set(...values));
     const FS=wasmModule.FS;
     for(const dir of ['/data','/lib','/home/web_user/.speed-dreams-2'])FS.mkdirTree(dir);
     packManager=new PackManager(manifest,FS,(id,phase,ratio,error)=>{
@@ -254,7 +261,7 @@ async function start(mode='menu') {
       else if(phase==='fetching')message(`${id} をダウンロードしています`);
       else if(phase==='unpacking')message(`${id} を展開しています ${Math.round(ratio*100)}%`);
       else if(phase==='ready')message(`${id} の読み込み完了`);
-    });
+    },{maxConcurrent:smallTouchScreen?1:2});
     wasmModule.wgDataReady = directory => packManager.isReady(directory)?1:0;
     await packManager.load('start');
     // Retain upstream menu/race music from its separate original asset pack.

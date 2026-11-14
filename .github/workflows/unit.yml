@@ -1,0 +1,34 @@
+name: Fast mobile runtime checks
+
+on:
+  push:
+    branches:
+      - 'perf/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: JavaScript input, ZIP, memory and quality policy tests
+        run: node --test tests/*.test.mjs
+      - name: Original HumanDriver patch contract
+        run: python3 tests/native_patch_test.py
+      - name: Compile native mobile bridge test (stub-only, not full engine)
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/fake-emscripten tests/native_bridge_compile.cpp -o /tmp/sd-mobile-bridge
+          /tmp/sd-mobile-bridge
+      - name: Static JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in web/*.mjs tests/*.mjs; do node --check "$f"; done
+      - name: Report scope
+        run: echo 'No real game, phone, GPU or racing performance has been verified by this workflow.' >> "$GITHUB_STEP_SUMMARY"
