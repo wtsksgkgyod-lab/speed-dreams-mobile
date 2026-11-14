@@ -58,7 +58,7 @@ def main():
                     if time.monotonic() > deadline:
                         raise
                     time.sleep(0.2)
-            assert page.locator("#start").is_enabled(), "Start button not enabled"
+            page.wait_for_function("document.getElementById(\'start\')?.disabled === false", timeout=15000)
             page.screenshot(path=str(out / "01-loading.png"))
             page.locator("#start").click()
             start = time.monotonic()
