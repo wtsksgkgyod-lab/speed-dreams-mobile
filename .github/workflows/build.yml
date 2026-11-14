@@ -26,9 +26,16 @@ jobs:
         run: |
           set -euo pipefail
           echo 'd929cf26931e924405e561c82fdb5fd87c97b412332b56c4ea4e1f5c77c50d47  bundle/sd-mobile-src.tar.gz' | sha256sum -c -
-          # Preserve this maintained workflow; the source snapshot also contains an earlier workflow.
-          tar --exclude='./.github/workflows/build.yml' -xzf bundle/sd-mobile-src.tar.gz
+          # The source snapshot is an integrity-checked bootstrap fallback ONLY.
+          # Never overwrite newer, committed implementation files on each run:
+          # doing so silently removed Quick Race and other merged fixes.
+          if [[ ! -f scripts/build_mobile.sh || ! -f native/mobile_bridge.inc || ! -f web/mobile.mjs ]]; then
+            tar --exclude='./.github/workflows/build.yml' -xzf bundle/sd-mobile-src.tar.gz
+          fi
           test -f scripts/build_mobile.sh && test -f native/mobile_bridge.inc && test -f web/mobile.mjs
+          test -f tests/runtime_smoke.py
+          grep -q 'id="quick-race"' web/index.html
+          echo "SOURCE CHECK: using checked-in Quick Race and current mobile integration"
       - name: Test native bridge and browser input contract
         shell: bash
         run: |
