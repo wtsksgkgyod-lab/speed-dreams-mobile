@@ -1,0 +1,105 @@
+name: Build and publish Speed Dreams Mobile (genuine WASM)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: speed-dreams-mobile
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    outputs:
+      pages_ok: ${{ steps.pages_size.outputs.pages_ok }}
+    steps:
+      - name: Check out integration archive
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Restore exact mobile integration sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'd929cf26931e924405e561c82fdb5fd87c97b412332b56c4ea4e1f5c77c50d47  bundle/sd-mobile-src.tar.gz' | sha256sum -c -
+          # Preserve this maintained workflow; the source snapshot also contains an earlier workflow.
+          tar --exclude='./.github/workflows/build.yml' -xzf bundle/sd-mobile-src.tar.gz
+          test -f scripts/build_mobile.sh && test -f native/mobile_bridge.inc && test -f web/mobile.mjs
+      - name: Test native bridge and browser input contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/*.test.mjs
+          python3 tests/native_patch_test.py
+          g++ -std=c++17 -Wall -Wextra -Werror -Itests/fake-emscripten tests/native_bridge_compile.cpp -o /tmp/sd_mobile_bridge_test
+          /tmp/sd_mobile_bridge_test
+      - name: Expose the complete source tree in GitHub
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add LICENSE README.md package.json docs native scripts tests web
+          if ! git diff --cached --quiet; then
+            git commit -m 'Expose mobile implementation sources [skip ci]'
+            git push origin HEAD:main || echo 'NOTICE: source auto-push was not allowed; build continues using extracted source.'
+          fi
+      - name: Install pinned Emscripten 4.0.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git /tmp/emsdk
+          /tmp/emsdk/emsdk install 4.0.7
+          /tmp/emsdk/emsdk activate 4.0.7
+      - name: Compile the actual Speed Dreams C/C++ simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/emsdk/emsdk_env.sh
+          JOBS=2 bash scripts/build_mobile.sh
+      - name: Upload built game and corresponding sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: speed-dreams-mobile-dist
+          path: web/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Check GitHub Pages site budget
+        id: pages_size
+        shell: bash
+        run: |
+          BYTES=$(du -sb web | cut -f1)
+          echo "Distribution: $BYTES bytes"
+          if [ "$BYTES" -le 1000000000 ]; then
+            echo 'pages_ok=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'pages_ok=false' >> "$GITHUB_OUTPUT"
+            echo 'Site too large for Pages; build is still in Actions artifacts.'
+          fi
+      - name: Upload Pages artifact
+        if: steps.pages_size.outputs.pages_ok == 'true' && github.event.repository.private == false
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.pages_ok == 'true' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy real Speed Dreams build
+        id: deployment
+        uses: actions/deploy-pages@v4
