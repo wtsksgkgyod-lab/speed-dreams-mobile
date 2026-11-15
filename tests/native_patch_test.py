@@ -21,9 +21,27 @@ void HumanDriver::drive_at(int index, tCarElt* car, tSituation *s)
 }
 '''
 with tempfile.TemporaryDirectory() as t:
-    p=Path(t)/'rthumandriver.cpp';p.write_text(SAMPLE)
+    p=Path(t)/'src/drivers/human/rthumandriver.cpp'
+    p.parent.mkdir(parents=True)
+    p.write_text(SAMPLE)
+    racing=Path(t)/'src/modules/userinterface/legacymenu/racescreens/racerunningmenus.cpp'
+    racing.parent.mkdir(parents=True)
+    racing.write_text('''static void* rmScreenHandle;
+static bool rmPreRacePause;
+static void RmReadyToRace(void*) {}
+static void
+rmCloseCfg(void * /* dummy */)
+{
+    RmReadyToRace(NULL);
+}
+''')
     subprocess.run([sys.executable,str(SCRIPT),str(p)],check=True,capture_output=True)
     after=p.read_text()
+    race_after=racing.read_text()
+    assert 'wg_mobile_prerace_waiting' in race_after
+    assert 'wg_mobile_confirm_prerace' in race_after
+    assert 'RmReadyToRace(nullptr)' in race_after
+    assert 'rmScreenHandle && rmPreRacePause' in race_after
     assert 'wg_mobile_set_controls' in after
     assert 'sd_mobile::useControls(car)' in after
     assert 'sd_mobile::changeGear(car)' in after
