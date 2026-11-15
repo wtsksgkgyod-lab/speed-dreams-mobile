@@ -129,9 +129,19 @@ def main():
                 page.wait_for_timeout(12000)
                 report["native_start_button_present"] = page.locator("#race-confirm").is_visible()
                 if report["native_start_button_present"]:
+                    # This MUST be a native game state transition, not a synthetic
+                    # KeyboardEvent: Safari may ignore untrusted DOM key presses.
+                    native_state = "window.Module.cwrap('wg_mobile_prerace_waiting', 'number', [])()"
+                    report["native_prerace_before"] = page.evaluate(native_state)
+                    if report["native_prerace_before"] != 1:
+                        raise AssertionError("Game did not reach the original native pre-race pause")
                     page.locator("#race-confirm").click(timeout=90000)
-                    print("Touch START RACE pressed (synthetic SDL Enter event)", flush=True)
                     page.wait_for_timeout(900)
+                    report["native_prerace_after"] = page.evaluate(native_state)
+                    if report["native_prerace_after"] != 0:
+                        raise AssertionError("Touch START RACE failed to release native pre-race pause")
+                    report["native_ready_transition"] = True
+                    print("PASS: Touch START RACE invoked original native RmReadyToRace callback", flush=True)
                     page.screenshot(path=str(out / "03-confirmed-race.png"))
                 pedal = page.locator("#throttle")
                 if pedal.is_visible():
