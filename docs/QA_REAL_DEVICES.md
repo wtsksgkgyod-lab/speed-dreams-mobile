@@ -2,6 +2,15 @@
 
 Do not mark any item "pass" until the genuine engine and assets have compiled and been exercised on actual hardware. Headless Chromium layout checks are not phone tests.
 
+## Verified desktop automation baseline (not physical device QA)
+
+- GitHub Actions [run 43767505631](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43767505631), 2026-11-15.
+- Original Speed Dreams C/C++ compiled to WASM, native startup/menu rendered under headless Chromium.
+- Browser touch-accessible START RACE was clicked to confirm the original `Hit <Enter> or any joystick button to start` prompt.
+- Held virtual throttle after the confirmation: speed HUD reached **187 km/h**, up from **0 km/h** in the previous failing run.
+- This confirms basic native race entry, speed telemetry and input wiring only. It does NOT verify AI race completion, manual shifting, lap timing, real GPU performance, memory, actual iPhone/Android operation, or a public deployed site.
+- CI must block production deployment if the real-WASM engine boot or throttle regression fails.
+
 ## Compatibility matrix
 
 | Target | Device OS / browser | Boot | Drive | AI | Repeat x5 | FPS median/p1 | JS/Wasm memory | Input delay | Result |
