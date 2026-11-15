@@ -231,7 +231,9 @@ function buildNativeAPI(mod) {
 function updateHUD() {
   if(!engineStarted||!native)return;
   try {
-    $('speed').textContent=String(Math.round(Math.abs(native.speed()))).padStart(3,'0');
+    const speedKph=Math.abs(native.speed());
+    if(speedKph>2 && startupStage!=='vehicle_moving') markStartup('vehicle_moving',Math.round(speedKph)+'km/h');
+    $('speed').textContent=String(Math.round(speedKph)).padStart(3,'0');
     const gear=native.gear();$('gear').textContent=gear===0?'N':gear===-1?'R':String(gear);
   }catch(e){console.warn('HUD unavailable',e);}
 }
