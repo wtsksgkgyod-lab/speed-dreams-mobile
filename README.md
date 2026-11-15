@@ -4,10 +4,11 @@ An **unofficial independent mobile browser derivative** of **Speed Dreams**, usi
 
 ## Verification status (2026-11-15)
 
-**Genuine Speed Dreams WebAssembly compilation and headless Chromium engine boot are verified. Mobile driving and public deployment are NOT yet verified.**
+**Genuine Speed Dreams WebAssembly compilation, headless Chromium engine boot, and an accelerating original Quick Race are verified. Physical iPhone/Android driving and public deployment are NOT yet verified.**
 
-GitHub Actions compiles the original Speed Dreams C/C++ game and its original cars/tracks. Run [#13](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43655181344) succeeded in the *build job* and its real-WASM browser boot smoke test. Its full workflow conclusion remains failure because GitHub Pages deployment returns 404 while the repository has no enabled Pages site. Original physical racing, manual shifting, iPhone FPS, Android performance and repeated sessions remain **UNTESTED**. Direct Quick Race acceleration is being evaluated separately in [run #14](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43655954301). Do not present this as a verified playable release.
+GitHub Actions compiles the original Speed Dreams C/C++ game and its original cars/tracks. The [2026-11-15 full-WASM regression run](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43767505631) passed the build job, booted native menus, tapped the new browser **START RACE** control to trigger the original game's Enter-key confirmation, then accelerated an original Quick Race car to **187 km/h** in headless desktop Chromium. This confirms basic race entry, a live simulation and throttle input, not a completed race or mobile performance. The previous run had been stuck at 0 km/h while the native game displayed `Hit <Enter> or any joystick button to start`. 
 
+The overall GitHub Actions run still fails at the **GitHub Pages deploy stage**: the repository has no enabled Pages site. Enable `Settings → Pages → Source → GitHub Actions` once using the repository admin account. The full source-based game distribution artifact is still available from the successful build job. Native AI opponents, manual shift changes, actual lap/race completion, iPhone FPS, Android performance and repeated sessions remain **UNTESTED**.
 ### Mobile optimization pass
 
 - Original physics/AI are unchanged. JavaScript->WASM input snapshots now transmit only when control values change, avoiding the formerly continuous RAF push.
@@ -23,7 +24,7 @@ GitHub Actions compiles the original Speed Dreams C/C++ game and its original ca
 | Generated runtime + original data packs | 16 integrity-checked asset packs produced |
 | Optimized C++/JavaScript source tests | 18/18 Node tests plus bridge fixture and syntax checks passed |
 | Actual desktop headless Chromium engine boot | Passed on optimized build #13 |
-| Native Quick Race throttle/AI/lap | Separate test in progress; not yet confirmed |
+| Native Quick Race throttle / original race entry | **Headless desktop Chromium: START RACE + throttle -> 187 km/h**. AI and lap completion not tested |
 | Physical iPhone/Android stable 30fps, memory, latency | Not measured |
 | Public playable URL | None; GitHub Pages API responds 404 and repository is not Pages-enabled |
 
@@ -61,7 +62,7 @@ The bundled source intentionally does **not** include generated `speeddreams.was
 
 1. Tap **ENGINE START**. The host loads the genuine Emscripten module, integrity-checks/installs original `start` and `music` packs and invokes Speed Dreams' native main entry.
 2. Navigate the **original simulator menus** on the canvas. Touch menu compatibility requires integration testing.
-3. Enter a Quick Race or Practice using original menu modes. Tap **TOUCH ON** when driving. Tap **TOUCH OFF** before using menus.
+3. Choose **QUICK RACE · BRNO** on the start screen; after the original pre-race display appears, tap **START RACE ▶** to send the native Enter confirmation (the original game asks for Enter or a joystick button). Touch controls are enabled automatically for this route. For manual menu navigation, tap **TOUCH ON** when driving and **TOUCH OFF** in menus.
 4. On the left, slide sideways in steering area. On the right, slide vertically on accelerator and brake. Change AT/MT from the top toolbar; MT has +/- sequential buttons. The native driver retains ABS/TCS, auto-clutch and original physics.
 5. Debug stats: append `?debug=1` to the URL. Browser RAF FPS is **not** a GPU profiler or proof of physical driving performance.
 6. Run **repeated races**, not only main-menu smoke. See `docs/QA_REAL_DEVICES.md`.
