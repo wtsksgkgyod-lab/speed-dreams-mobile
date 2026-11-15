@@ -27,6 +27,7 @@ function showError(error) {
   $('start').disabled=false;
   $('start').textContent='RETRY / RELOAD';
   $('quick-race').disabled=true;
+  $('race-start-help').hidden=true;
   $('boot').hidden=false;
   $('boot-help').textContent='復旧できない場合はページを再読み込みしてください。ゲーム本体が未インストールの場合はREADMEのビルド手順を確認。';
   message(`エラー: ${error?.message||error}`);
@@ -138,6 +139,27 @@ async function retryAssets() {
   toast(failures.length ? '再取得に失敗しました。通信を確認してRETRY DATAを押してください。' : 'データの再取得が完了しました。', failures.length>0);
 }
 $('retry-assets').addEventListener('click',retryAssets);
+
+// Original Speed Dreams uses a keyboard/joystick confirmation on the pre-race screen.
+// Keep the native menus and game intact; emulate only the missing Enter key on mobile.
+// Dispatch on the SDL canvas so events bubble to document/window Emscripten listeners.
+function confirmNativeRace() {
+  if (!engineStarted) return;
+  canvas.focus();
+  const options={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
+  const dispatch=type=>{
+    const event=new KeyboardEvent(type,options);
+    // Safari may ignore deprecated keyCode/which constructor options.
+    for(const field of ['keyCode','which']){
+      if(event[field] !== 13) try {Object.defineProperty(event,field,{get:()=>13});} catch {}
+    }
+    canvas.dispatchEvent(event);
+  };
+  dispatch('keydown');
+  setTimeout(()=>dispatch('keyup'),120);
+  toast('レース開始を送信しました。まだ停止中なら、もう一度 START RACE を押してください。');
+}
+$('race-confirm').addEventListener('click',confirmNativeRace);
 
 function toggleTouch(enabled) {
   state.enabled=!!enabled;
@@ -280,6 +302,7 @@ async function start(mode='menu') {
     else native.enable(0);
     resizeCanvas();setProgress(1);
     $('boot').hidden=true;$('toolbar').hidden=false;$('footer').hidden=false;
+    $('race-start-help').hidden=mode!=='quickrace';
     if(debug)$('diagnostics').hidden=false;
     canvas.focus();checkOrientation();
     toast(mode==='quickrace'?'Quick Race開始。必要な車・コースを読み込んでいます。':'ゲーム内のメニューでレースを開始し、走行中は TOUCH ON を押してください。');
