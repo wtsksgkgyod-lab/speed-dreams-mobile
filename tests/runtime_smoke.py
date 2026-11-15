@@ -29,6 +29,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=210)
     ap.add_argument("--mode", choices=("menu","quickrace"), default="menu")
     ap.add_argument("--require-throttle", action="store_true", help="Quick Race must show physical car speed > 2 km/h")
+    ap.add_argument("--emulate-touch-phone", action="store_true", help="Emulate small landscape phone with multitouch in Chromium. Not Safari or real-device QA.")
     args = ap.parse_args()
     web = args.web.resolve()
     out = args.out.resolve()
@@ -45,7 +46,14 @@ def main():
                 "--no-sandbox", "--enable-webgl", "--enable-unsafe-swiftshader",
                 "--use-gl=angle", "--use-angle=swiftshader",
             ])
-            context = browser.new_context(viewport={"width": 844, "height": 390}, device_scale_factor=1, ignore_https_errors=False)
+            context = browser.new_context(
+                viewport={"width": 667, "height": 375} if args.emulate_touch_phone else {"width": 844, "height": 390},
+                device_scale_factor=2 if args.emulate_touch_phone else 1,
+                is_mobile=args.emulate_touch_phone,
+                has_touch=args.emulate_touch_phone,
+                ignore_https_errors=False,
+            )
+            report["emulated_touch_phone"] = args.emulate_touch_phone
             page = context.new_page()
             page.on("console", lambda m: report["console_errors"].append(m.text[:1000]) if m.type == "error" else None)
             page.on("pageerror", lambda e: report["page_errors"].append(str(e)[:2000]))
@@ -103,6 +111,12 @@ def main():
             report["wasm_heap_info"] = page.evaluate("() => window.Module && window.Module.HEAPU8 ? window.Module.HEAPU8.byteLength : null")
             page.screenshot(path=str(out / "02-result.png"), timeout=25000)
             if report["booted"]:
+                report["memory_policy_observed"] = page.evaluate("""() => ({
+                    startupMessage: document.querySelector('#memory-hint')?.textContent,
+                    canvasWidth: document.querySelector('#canvas')?.width,
+                    canvasHeight: document.querySelector('#canvas')?.height,
+                    deferredMusicHint: navigator.maxTouchPoints > 0
+                })""")
                 try:
                     report["diagnostic_hud"] = page.locator("#diagnostic-data").inner_text(timeout=2000)[:4000]
                 except Exception:
@@ -115,7 +129,7 @@ def main():
                 page.wait_for_timeout(12000)
                 report["native_start_button_present"] = page.locator("#race-confirm").is_visible()
                 if report["native_start_button_present"]:
-                    page.locator("#race-confirm").click()
+                    page.locator("#race-confirm").click(timeout=90000)
                     print("Touch START RACE pressed (synthetic SDL Enter event)", flush=True)
                     page.wait_for_timeout(900)
                     page.screenshot(path=str(out / "03-confirmed-race.png"))

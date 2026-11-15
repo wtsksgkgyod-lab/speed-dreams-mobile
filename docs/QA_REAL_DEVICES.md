@@ -11,6 +11,19 @@ Do not mark any item "pass" until the genuine engine and assets have compiled an
 - This confirms basic native race entry, speed telemetry and input wiring only. It does NOT verify AI race completion, manual shifting, lap timing, real GPU performance, memory, actual iPhone/Android operation, or a public deployed site.
 - CI must block production deployment if the real-WASM engine boot or throttle regression fails.
 
+## iPhone startup-freeze mitigation and diagnosis (2026-11-16)
+
+A tester reported that initiating the game on an iPhone Safari device caused the page to freeze. **The exact point of failure and root cause have NOT yet been proven.** The 84 MiB compressed original `start` asset, 23 MiB compressed `music` pack, per-entry expansion into Emscripten MEMFS, first WebGL initialization and on-demand race content are credible sources of memory pressure.
+
+The mobile WebKit/small-touch budget now:
+- Decreases first-render resolution/pixel ratio and its pixel cap (original physics and AI remain unchanged).
+- Does not eagerly download/decompress the separate 23 MiB music pack; keeps desktop and explicit `?full=1` legacy path unchanged. The native on-demand `wgDataReady` hook can request music when necessary.
+- Prefetches original Brno track pack before enabling the on-screen START RACE button, avoiding a synchronous tap-time download on low-memory devices.
+- Persists short startup stages locally so a Safari page reload can report the last stage without exfiltrating data. The new `診断情報をコピー` control creates a report that the player can share manually.
+- Adds a required *Chromium* small mobile viewport + touch-emulation genuine WASM smoke to CI, but this **does not** replace iPhone Safari testing.
+
+**If freeze persists:** Ask which screen/button: (1) QUICK RACE launch, (2) loading screen, or (3) START RACE on original pre-race screen. Reload Safari and copy diagnostics. Report whether Safari reloads itself, exits, or stops responding without changing the original simulation. Do not mark P2 complete until repeated Quick Race starts, acceleration, a completed race, and at least 20 min of normal iPhone use are measured.
+
 ## Compatibility matrix
 
 | Target | Device OS / browser | Boot | Drive | AI | Repeat x5 | FPS median/p1 | JS/Wasm memory | Input delay | Result |

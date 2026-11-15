@@ -10,9 +10,27 @@ const params = new URLSearchParams(location.search);
 const debug = params.get('debug') === '1';
 const QUALITY = [0.68, 0.78, 1.0];
 const smallTouchScreen=(navigator.maxTouchPoints||0)>0 && Math.min(innerWidth,innerHeight)<550;
+const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform==='MacIntel' && (navigator.maxTouchPoints||0)>1);
+// Safari doesn't expose deviceMemory; assume a conservative mobile budget by
+// default, rather than treating unknown device memory as unlimited.
+// ?full=1 retains the previous rendering/audio policy for comparison.
+const lowMemoryMode=(smallTouchScreen||isIOS)&&params.get('full')!=='1';
+const startupStorageKey='sdm.boot.stage.v1';
+let startupHistory=[];
+let startupStage='ready';
+function markStartup(stage,detail='') {
+  startupStage=stage;
+  startupHistory.push({elapsedMs:Math.round(performance.now()),stage,detail:String(detail).slice(0,180)});
+  if(startupHistory.length>28)startupHistory.shift();
+  try {localStorage.setItem(startupStorageKey,JSON.stringify({stage,when:Date.now(),detail:String(detail).slice(0,180)}));}catch{}
+}
+function lastStartup() {
+  try {return JSON.parse(localStorage.getItem(startupStorageKey)||'null');}catch{return null;}
+}
 const memoryGiB=Number.isFinite(navigator.deviceMemory)?navigator.deviceMemory:null;
 let wasmModule=null, packManager=null, native=null, publisher=null, engineStarted=false;
-let renderScale=initialRenderScale({touch:smallTouchScreen,width:Math.max(innerWidth,innerHeight),memoryGiB});
+let renderScale=lowMemoryMode ? .64 : initialRenderScale({touch:smallTouchScreen,width:Math.max(innerWidth,innerHeight),memoryGiB});
 const resolutionGovernor=new AdaptiveResolution(renderScale);
 let qualityMode='auto', lastFrame=performance.now();
 let totalFrames=0, secondFrames=0, secondStart=performance.now();
@@ -21,6 +39,7 @@ let orientation=window.innerWidth>window.innerHeight?'landscape':'portrait';
 
 function message(value) { $('status-text').textContent = value; }
 function showError(error) {
+  markStartup('error',error?.message||error);
   console.error('[Speed Dreams Mobile]',error);
   state.releaseAll();
   if(native) try{native.release();}catch{}
@@ -48,10 +67,10 @@ function checkOrientation() {
 }
 function getCanvasSize() {
   const w=Math.max(1,canvas.clientWidth),h=Math.max(1,canvas.clientHeight);
-  const pixelRatio=Math.min(smallTouchScreen&&qualityMode!=='high'?1.55:1.7,devicePixelRatio||1);
+  const pixelRatio=Math.min(lowMemoryMode&&qualityMode!=='high'?1.2:(smallTouchScreen&&qualityMode!=='high'?1.55:1.7),devicePixelRatio||1);
   let actualW=Math.min(1280,Math.round(w*pixelRatio*renderScale));
   let actualH=Math.min(800,Math.round(h*pixelRatio*renderScale));
-  const pixelCap=smallTouchScreen&&qualityMode!=='high'?760000:1024000;
+  const pixelCap=lowMemoryMode&&qualityMode!=='high'?360000:(smallTouchScreen&&qualityMode!=='high'?760000:1024000);
   if(actualW*actualH>pixelCap){const k=Math.sqrt(pixelCap/(actualW*actualH));actualW=Math.round(actualW*k);actualH=Math.round(actualH*k);}
   return [Math.max(320,actualW),Math.max(180,actualH)];
 }
@@ -144,7 +163,8 @@ $('retry-assets').addEventListener('click',retryAssets);
 // Keep the native menus and game intact; emulate only the missing Enter key on mobile.
 // Dispatch on the SDL canvas so events bubble to document/window Emscripten listeners.
 function confirmNativeRace() {
-  if (!engineStarted) return;
+  if (!engineStarted || $('race-confirm').disabled) return;
+  markStartup('race_confirmed');
   canvas.focus();
   const options={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
   const dispatch=type=>{
@@ -157,7 +177,8 @@ function confirmNativeRace() {
   };
   dispatch('keydown');
   setTimeout(()=>dispatch('keyup'),120);
-  toast('レース開始を送信しました。まだ停止中なら、もう一度 START RACE を押してください。');
+  toast('原作レースに開始指示を送信しました。画面の更新を確認しています。');
+  setTimeout(()=>{if(engineStarted && startupStage==='race_confirmed')markStartup('race_running_or_loading');},1600);
 }
 $('race-confirm').addEventListener('click',confirmNativeRace);
 
@@ -210,7 +231,9 @@ function buildNativeAPI(mod) {
 function updateHUD() {
   if(!engineStarted||!native)return;
   try {
-    $('speed').textContent=String(Math.round(Math.abs(native.speed()))).padStart(3,'0');
+    const speedKph=Math.abs(native.speed());
+    if(speedKph>2 && startupStage!=='vehicle_moving') markStartup('vehicle_moving',Math.round(speedKph)+'km/h');
+    $('speed').textContent=String(Math.round(speedKph)).padStart(3,'0');
     const gear=native.gear();$('gear').textContent=gear===0?'N':gear===-1?'R':String(gear);
   }catch(e){console.warn('HUD unavailable',e);}
 }
@@ -237,6 +260,7 @@ requestAnimationFrame(instrumentationFrame);
 setInterval(updateHUD,160);
 
 async function start(mode='menu') {
+  markStartup('launch_requested',mode);
   $('start').disabled=true;
   $('quick-race').disabled=true;
   $('start').textContent='STARTING…';
@@ -265,9 +289,11 @@ async function start(mode='menu') {
       setStatus:status=>{if(status&&debug)console.debug('emscripten:',status)},
     };
     window.Module=mod;
+    markStartup('wasm_loading');
     message('ゲームエンジンを読み込んでいます');setProgress(.15);
     await loadScript(manifest.runtime.js);
     wasmModule=await runtimeReady;
+    markStartup('wasm_ready');
     native=buildNativeAPI(wasmModule);
     publisher=new InputPublisher((...values)=>native.set(...values));
     const FS=wasmModule.FS;
@@ -285,9 +311,19 @@ async function start(mode='menu') {
       else if(phase==='ready')message(`${id} の読み込み完了`);
     },{maxConcurrent:smallTouchScreen?1:2});
     wasmModule.wgDataReady = directory => packManager.isReady(directory)?1:0;
+    markStartup('starter_pack_loading');
     await packManager.load('start');
-    // Retain upstream menu/race music from its separate original asset pack.
-    await packManager.load('music');
+    markStartup('starter_pack_ready');
+    // Speed Dreams' music is optional for the initial race. Holding a second
+    // ~23 MiB compressed asset and its decoded files alongside the ~84 MiB
+    // starter pack has been a likely iOS memory pressure point. Leave music
+    // to the existing wgDataReady on-demand mechanism on small touch devices.
+    // Desktop and ?full=1 still exercise the original eager-audio path.
+    if (!lowMemoryMode) {
+      markStartup('music_pack_loading');
+      await packManager.load('music');
+      markStartup('music_pack_ready');
+    }
     setProgress(.97);message('オリジナルシミュレーターを起動中');
     // The original Speed Dreams GfApplication supports these official CLI flags.
     // SDL's Emscripten main loop deliberately unwinds instead of returning.
@@ -295,14 +331,35 @@ async function start(mode='menu') {
     // The original main.cpp explicitly supports -s/--startrace. This bypasses
     // mouse-heavy native menus and starts the preserved Quick Race config.
     if(mode==='quickrace')args.push('-s','quickrace');
+    markStartup('native_main_starting',mode);
     try {wasmModule.callMain(args);}
     catch(e){if(String(e)!=='unwind' && e?.message!=='unwind')throw e;}
     engineStarted=true;
+    markStartup('native_main_ready',mode);
     if(mode==='quickrace')toggleTouch(true);
     else native.enable(0);
     resizeCanvas();setProgress(1);
     $('boot').hidden=true;$('toolbar').hidden=false;$('footer').hidden=false;
     $('race-start-help').hidden=mode!=='quickrace';
+    if(mode==='quickrace' && lowMemoryMode){
+      // Preload the initial track while the pre-race confirmation is visible,
+      // never in the same synchronous event as the player's START RACE tap.
+      const button=$('race-confirm'),help=$('race-start-help').querySelector('small');
+      button.disabled=true;
+      button.textContent='コース準備中…';
+      help.textContent='原作のコース素材を読み込んでいます。画面が反応するまま処理します。';
+      markStartup('quickrace_track_loading');
+      packManager.load('track-brno').then(()=>{
+        markStartup('quickrace_track_ready');
+        button.textContent='START RACE ▶';button.disabled=false;
+        help.textContent='準備完了。タップして原作レースを開始してください。';
+      },err=>{
+        markStartup('quickrace_track_failed',err?.message||err);
+        button.textContent='START RACE ▶';button.disabled=false;
+        help.textContent='コースの読み込みに失敗しました。RETRY DATAを試してください。';
+        $('retry-assets').hidden=false;
+      });
+    }
     if(debug)$('diagnostics').hidden=false;
     canvas.focus();checkOrientation();
     toast(mode==='quickrace'?'Quick Race開始。必要な車・コースを読み込んでいます。':'ゲーム内のメニューでレースを開始し、走行中は TOUCH ON を押してください。');
@@ -318,6 +375,12 @@ $('quick-race').addEventListener('click',()=>{
   start('quickrace');
 });
 async function prepare() {
+  const previous=lastStartup();
+  if(previous && Date.now()-previous.when<40*60*1000 &&
+     !['ready','native_main_ready','race_running_or_loading'].includes(previous.stage)) {
+    $('boot-help').textContent='前回の最終段階: '+previous.stage+
+      '。もしSafariが停止・再読み込みした場合は、下の「診断をコピー」で状態を共有できます。';
+  }
   $('start').disabled=false;
   $('start').textContent='OPEN SIMULATOR →';
   $('quick-race').disabled=false;
@@ -326,3 +389,27 @@ async function prepare() {
   checkOrientation();
 }
 prepare();
+
+function diagnosticReport() {
+  const mod=wasmModule;
+  return JSON.stringify({
+    build:'ios-startup-guard-v1',
+    stage:startupStage,
+    previous:lastStartup(),
+    latest:startupHistory,
+    platform:navigator.platform,
+    userAgent:navigator.userAgent,
+    viewport:[innerWidth,innerHeight],
+    canvas:[canvas.width,canvas.height],
+    smallTouchScreen,isIOS,lowMemoryMode,
+    mode:qualityMode,
+    wasmHeapMiB:mod?.HEAPU8?.byteLength?Math.round(mod.HEAPU8.byteLength/1048576):null,
+    gameStarted:engineStarted,
+    packs:packManager?.getMetrics()||[]
+  },null,2);
+}
+$('copy-report').addEventListener('click',async ()=>{
+  const report=diagnosticReport();
+  try {await navigator.clipboard.writeText(report);toast('診断情報をコピーしました。チャットに貼り付けてください。');}
+  catch { $('diagnostics').hidden=false;$('diagnostic-data').textContent=report;toast('診断を下の表示欄に出しました。テキストをコピーしてください。'); }
+});
