@@ -85,5 +85,40 @@ add_once(at_anchor, '''void HumanDriver::drive_at(int index, tCarElt* car, tSitu
     if (sd_mobile::state.enabled) HCtx[idx]->manual = false;
 #endif
 ''')
+# The original pre-race dialog (tires/fuel + Enter-to-start banner) is
+# implemented in LegacyMenu, not in the HumanDriver input bridge.
+# Browser-created KeyboardEvent is not guaranteed to reach SDL on Safari,
+# so export an explicit native entry point to the SAME original menu callback.
+# This preserves the original race configuration, pause state and physics.
+race_source = source.parents[2] / "modules/userinterface/legacymenu/racescreens/racerunningmenus.cpp"
+assert race_source.exists(), f"Missing pinned race running menu: {race_source}"
+race_body = race_source.read_text()
+if "SPEED DREAMS MOBILE: native pre-race confirmation" in race_body:
+    raise SystemExit("Native pre-race confirmation already applied (refusing double application)")
+race_anchor = 'static void\\nrmCloseCfg(void * /* dummy */)\\n{'.replace('\\n', '\n')
+assert race_body.count(race_anchor) == 1, "Pinned LegacyMenu pre-race callback anchor not unique"
+race_bridge = """// SPEED DREAMS MOBILE: native pre-race confirmation for touch browsers.
+// Invoke the SAME callback as Enter/joystick from the original LegacyMenu.
+// Do not simulate a browser keyboard event: iOS Safari can reject that path.
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_prerace_waiting()
+{
+    return rmScreenHandle && rmPreRacePause ? 1 : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_confirm_prerace()
+{
+    if (!rmScreenHandle || !rmPreRacePause)
+        return 0;
+    RmReadyToRace(nullptr);
+    return 1;
+}
+#endif
+
+"""
+race_body = race_body.replace(race_anchor, race_bridge + race_anchor, 1)
+
 source.write_text(body)
+race_source.write_text(race_body)
 print(f"Applied Speed Dreams Mobile native input bridge: {source}")
+print(f"Applied native pre-race confirmation to pinned LegacyMenu: {race_source}")
