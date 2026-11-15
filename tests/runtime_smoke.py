@@ -110,7 +110,15 @@ def main():
             if report["booted"] and report["mode_effective"] == "quickrace":
                 # Probe vehicle response with a held virtual throttle. Software
                 # renderer timing can make this inconclusive; it is not a lap test.
+                # Original game shows "Hit <Enter> or any joystick button to start".
+                # A phone has no Enter key, so verify the new visible touch control.
                 page.wait_for_timeout(12000)
+                report["native_start_button_present"] = page.locator("#race-confirm").is_visible()
+                if report["native_start_button_present"]:
+                    page.locator("#race-confirm").click()
+                    print("Touch START RACE pressed (synthetic SDL Enter event)", flush=True)
+                    page.wait_for_timeout(900)
+                    page.screenshot(path=str(out / "03-confirmed-race.png"))
                 pedal = page.locator("#throttle")
                 if pedal.is_visible():
                     rect = pedal.bounding_box()
@@ -128,7 +136,26 @@ def main():
                             page.mouse.up()
                         report["throttle_probe_max_kph"] = top_speed
                         print(f"Headless throttle probe max speed: {top_speed} km/h (not a lap test)", flush=True)
-                        page.screenshot(path=str(out / "03-after-throttle.png"))
+                        page.screenshot(path=str(out / "04-after-throttle.png"))
+                        if top_speed <= 2:
+                            # Distinguish a synthetic DOM event issue from native
+                            # race physics/input problems using trusted keyboard input.
+                            page.locator("#canvas").focus()
+                            page.keyboard.press("Enter")
+                            page.wait_for_timeout(1200)
+                            keyboard_max = 0
+                            page.mouse.move(rect["x"] + rect["width"]/2, rect["y"] + rect["height"]*.1)
+                            page.mouse.down()
+                            try:
+                                for _ in range(14):
+                                    page.wait_for_timeout(500)
+                                    try: keyboard_max=max(keyboard_max,int(page.locator("#speed").inner_text()))
+                                    except ValueError: pass
+                            finally:
+                                page.mouse.up()
+                            report["physical_keyboard_fallback_max_kph"] = keyboard_max
+                            print(f"Physical keyboard confirmation fallback: {keyboard_max} km/h", flush=True)
+                            page.screenshot(path=str(out / "05-after-keyboard.png"))
             (out / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
             context.close()
             browser.close()
