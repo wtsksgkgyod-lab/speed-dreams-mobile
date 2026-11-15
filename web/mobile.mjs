@@ -164,21 +164,31 @@ $('retry-assets').addEventListener('click',retryAssets);
 // Dispatch on the SDL canvas so events bubble to document/window Emscripten listeners.
 function confirmNativeRace() {
   if (!engineStarted || $('race-confirm').disabled) return;
-  markStartup('race_confirmed');
-  canvas.focus();
-  const options={key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true};
-  const dispatch=type=>{
-    const event=new KeyboardEvent(type,options);
-    // Safari may ignore deprecated keyCode/which constructor options.
-    for(const field of ['keyCode','which']){
-      if(event[field] !== 13) try {Object.defineProperty(event,field,{get:()=>13});} catch {}
+  // The original racing UI is paused in RmAddPreRacePauseItems; browsers do
+  // not guarantee that untrusted KeyboardEvent will reach SDL (notably Safari).
+  // Call the exact original RmReadyToRace callback from WASM instead, so its
+  // config Apply, UI dismissal and race unpause are performed atomically.
+  try {
+    const waiting=native?.preraceWaiting?.();
+    if (waiting!==1) {
+      toast('レースの準備中です。画面が開始待ちになるまでお待ちください。');
+      markStartup('race_waiting_for_native',String(waiting));
+      return;
     }
-    canvas.dispatchEvent(event);
-  };
-  dispatch('keydown');
-  setTimeout(()=>dispatch('keyup'),120);
-  toast('原作レースに開始指示を送信しました。画面の更新を確認しています。');
-  setTimeout(()=>{if(engineStarted && startupStage==='race_confirmed')markStartup('race_running_or_loading');},1600);
+    markStartup('native_prerace_confirming');
+    const accepted=native.confirmPrerace();
+    if (accepted!==1) {
+      toast('レース開始を受け付けられませんでした。診断をコピーしてください。',true);
+      markStartup('native_prerace_rejected',String(accepted));
+      return;
+    }
+    markStartup('native_prerace_confirmed');
+    $('race-start-help').hidden=true;
+    toast('原作レースを開始しました。アクセルで走行できます。');
+  } catch(error) {
+    markStartup('native_prerace_error',error?.message||error);
+    showError(error);
+  }
 }
 $('race-confirm').addEventListener('click',confirmNativeRace);
 
@@ -226,6 +236,8 @@ function buildNativeAPI(mod) {
     rpm:wrap('wg_mobile_engine_rpm',num,[]),
     gear:wrap('wg_mobile_gear',num,[]),
     resize:wrap('wg_resize',null,[num,num]),
+    preraceWaiting:wrap('wg_mobile_prerace_waiting',num,[]),
+    confirmPrerace:wrap('wg_mobile_confirm_prerace',num,[]),
   };
 }
 function updateHUD() {
