@@ -2,21 +2,30 @@
 
 An **unofficial independent mobile browser derivative** of **Speed Dreams**, using the EXISTING [wasmga.me Emscripten/WebAssembly port](https://github.com/wasmga-me/speed-dreams-wasm) and the actual original game simulation/AI. Not a Three.js remake or demo game.
 
-## Verification status (2026-11-14)
+## Verification status (2026-11-15)
 
-**This ZIP is NOT a compiled playable game.** It contains real native control-bridge and browser host source plus reproducible build scripts. In the authoring container, GitHub DNS access and `emcc` were missing. No actual Speed Dreams WASM/game asset binaries were obtained, compiled, driven or deployed. The generated game files, asset packs and web vendor decoder will only appear after a successful build on a network-enabled Linux worker. Do not publish a "playable" URL until a real race is verified.
+**Genuine Speed Dreams WebAssembly compilation and headless Chromium engine boot are verified. Mobile driving and public deployment are NOT yet verified.**
 
-| Part | Current evidence |
+GitHub Actions compiles the original Speed Dreams C/C++ game and its original cars/tracks. Run [#13](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43655181344) succeeded in the *build job* and its real-WASM browser boot smoke test. Its full workflow conclusion remains failure because GitHub Pages deployment returns 404 while the repository has no enabled Pages site. Original physical racing, manual shifting, iPhone FPS, Android performance and repeated sessions remain **UNTESTED**. Direct Quick Race acceleration is being evaluated separately in [run #14](https://github.com/wtsksgkgyod-lab/speed-dreams-mobile/actions/runs/43655954301). Do not present this as a verified playable release.
+
+### Mobile optimization pass
+
+- Original physics/AI are unchanged. JavaScript->WASM input snapshots now transmit only when control values change, avoiding the formerly continuous RAF push.
+- Fewer mobile rendering pixels at startup; conservative downscale governor, no auto upscale on misleading page RAF statistics. HIGH remains manual.
+- ZIP installation caches already-created Emscripten FS directories and yields by file count and elapsed work time.
+- At most one original car/track ZIP download is in-flight on small touch devices, two on larger browsers.
+- `?debug=1` reports page RAF proxy timing and per-pack download/hash/extract durations (not direct GPU timing).
+- The separate fast GitHub Actions check passed **18 JavaScript tests**, the C++ bridge stub contract and the source patch test. A 1,000-entry simulated ZIP needed one directory-creation operation. See [optimization measurements and limits](docs/MOBILE_OPTIMIZATION_AUDIT.md).
+
+| Area | Confirmed result |
 |:--|:--|
-| Original source inspection | Real pinned upstream port and `HumanDriver` code inspected via GitHub read API |
-| Mobile C++ bridge | Implemented; isolated C++ contract compile+assertion passed (stubbed game types, **not** a real engine link) |
-| Pointer control/state | Implemented; 4 Node input tests passed |
-| ZIP pack extraction | Implemented; 4 Node safety/ZIP tests passed |
-| Browser host shell | Static HTML/CSS rendered in local headless Chromium at 667×375 / 1280×720 |
-| Actual `.wasm` + original assets | Not built or downloaded |
-| Integrated steering, shifting, AI race | Not verified |
-| FPS, memory, input latency on iPhone/Android | Not measured |
-| Public URL | Not published |
+| Original source + WebAssembly | Built successfully in GitHub Actions |
+| Generated runtime + original data packs | 16 integrity-checked asset packs produced |
+| Optimized C++/JavaScript source tests | 18/18 Node tests plus bridge fixture and syntax checks passed |
+| Actual desktop headless Chromium engine boot | Passed on optimized build #13 |
+| Native Quick Race throttle/AI/lap | Separate test in progress; not yet confirmed |
+| Physical iPhone/Android stable 30fps, memory, latency | Not measured |
+| Public playable URL | None; GitHub Pages API responds 404 and repository is not Pages-enabled |
 
 ## Reproducible compilation
 
