@@ -121,6 +121,16 @@ def main():
                     report["diagnostic_hud"] = page.locator("#diagnostic-data").inner_text(timeout=2000)[:4000]
                 except Exception:
                     report["diagnostic_hud"] = None
+            if report["booted"] and args.emulate_touch_phone:
+                graph = page.evaluate("() => window.Module.FS.readFile('/data/config/graph.xml', {encoding:'utf8'})")
+                report["native_mobile_graphics_lite"] = (
+                    'name="LOD Factor" val="0.40"' in graph and
+                    'name="sky dome distance" val="0"' in graph and
+                    'name="visibility" val="1200"' in graph
+                )
+                if not report["native_mobile_graphics_lite"]:
+                    raise AssertionError("Genuine Speed Dreams on-phone profile was not installed before native init")
+                print("PASS: Original Speed Dreams low-draw-call graphics profile installed", flush=True)
             if report["booted"] and report["mode_effective"] == "quickrace":
                 # Probe vehicle response with a held virtual throttle. Software
                 # renderer timing can make this inconclusive; it is not a lap test.
@@ -158,6 +168,20 @@ def main():
                                 except ValueError: pass
                         finally:
                             page.mouse.up()
+                        report["native_perf"] = page.evaluate("""() => {
+                            const m=window.Module, fn=name=>m.cwrap(name,'number',[])();
+                            return {
+                              simMs:fn('wg_mobile_perf_sim_total_ms'),
+                              drawMs:fn('wg_mobile_perf_draw_total_ms'),
+                              guiMs:fn('wg_mobile_perf_gui_total_ms'),
+                              swapMs:fn('wg_mobile_perf_swap_total_ms'),
+                              simCalls:fn('wg_mobile_perf_sim_calls'),
+                              drawFrames:fn('wg_mobile_perf_draw_frames')
+                            };
+                        }""")
+                        if report["native_perf"]["drawFrames"] < 1 or report["native_perf"]["simCalls"] < 1:
+                            raise AssertionError("Native frame/simulation profiler is not recording real Speed Dreams callbacks")
+                        print("PASS: Native sim/draw/GPU-submit frame profiler records real work", flush=True)
                         report["throttle_probe_max_kph"] = top_speed
                         print(f"Headless throttle probe max speed: {top_speed} km/h (not a lap test)", flush=True)
                         page.screenshot(path=str(out / "04-after-throttle.png"))

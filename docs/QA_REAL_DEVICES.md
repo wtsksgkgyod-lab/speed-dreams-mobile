@@ -24,11 +24,25 @@ The mobile WebKit/small-touch budget now:
 
 **If freeze persists:** Ask which screen/button: (1) QUICK RACE launch, (2) loading screen, or (3) START RACE on original pre-race screen. Reload Safari and copy diagnostics. Report whether Safari reloads itself, exits, or stops responding without changing the original simulation. Do not mark P2 complete until repeated Quick Race starts, acceleration, a completed race, and at least 20 min of normal iPhone use are measured.
 
+## Real iPhone critical performance failure (reported 2026-11-16)
+
+The player reports **approximately 0.3 frames/second** on an iPhone when the original Quick Race starts. This is a genuine failure of mobile playability, not a completed phone QA pass. Device-side GPU/CPU timings were not captured, so the bottleneck is not yet proven.
+
+Investigation of the pinned Speed Dreams source found a potentially serious **unbounded simulation catch-up loop** in `ReSituationUpdater::computeCurrentStep`: after a slow WebGL frame, the simulator tries to execute every missed 0.002-second physics step, potentially creating positive feedback between slow graphics and CPU debt. The integration's WASM-only patch now limits catch-up to 0.080s (original simuv5 step size is unchanged), intentionally allowing slow-motion game time under severe load rather than a frozen main thread. Desktop builds and upstream source remain untouched.
+
+Other changes:
+- Use a conservative version of the **original** `data/config/graph.xml` on mobile: shorter visibility range, earlier car LOD, no sky dome/clouds, static instead of expensive shadows. This is reversible for A/B checks with `?profile=original`.
+- Native C++ counters report time spent updating simulation, rendering original 3D, drawing native GUI, submitting/swapping browser WebGL frames, and wall-time debt discarded.
+- A small **PERF** panel during racing allows an opt-in eight-second *no-3D-render* isolation test; 3D draw returns automatically. This is **diagnostic only**, not a gameplay setting. Use the **診断をコピー** button to share the numerical record.
+- Emulated Chromium test failures/successes are not evidence of Safari 30/60 FPS. The follow-up physical device report must distinguish whether frame time is concentrated in sim/AI catch-up or PLIB/gl4es/WebGL rendering.
+
+**Hard release gate:** 0.3fps fails. No commercial/playable claims, no further visual polish, until real iPhone tests show at least stable 30 FPS and responsive driving, with original physics and a completed race.
+
 ## Compatibility matrix
 
 | Target | Device OS / browser | Boot | Drive | AI | Repeat x5 | FPS median/p1 | JS/Wasm memory | Input delay | Result |
 |---|---|---|---|---|---|---|---|---|---|
-| iPhone SE 3 | Safari / actual iOS | UNTESTED | UNTESTED | UNTESTED | UNTESTED | not measured | not measured | not measured | UNTESTED |
+| iPhone SE 3 | Safari / actual iOS | PASS (starts race) | BEGINS / NOT PLAYABLE | UNTESTED | UNTESTED | **~0.3 FPS reported** | not measured | not measured | **FAIL** |
 | iPhone recent | Safari / actual iOS | UNTESTED | UNTESTED | UNTESTED | UNTESTED | not measured | not measured | not measured | UNTESTED |
 | Android mid-range | Chrome / actual Android | UNTESTED | UNTESTED | UNTESTED | UNTESTED | not measured | not measured | not measured | UNTESTED |
 | Desktop | Chromium / macOS or Windows | UNTESTED | UNTESTED | UNTESTED | UNTESTED | not measured | not measured | not measured | UNTESTED |

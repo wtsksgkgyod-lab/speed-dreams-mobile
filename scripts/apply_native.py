@@ -118,7 +118,146 @@ extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_confirm_prerace()
 """
 race_body = race_body.replace(race_anchor, race_bridge + race_anchor, 1)
 
+# Profile the real race loop, not the DOM requestAnimationFrame proxy.
+# This lets actual Safari hardware distinguish sim/AI CPU from native PLIB/GL4ES
+# draw calls and browser GPU submission. The optional no-render trial never
+# changes physics and is automatically restored by the browser diagnostic UI.
+perf_anchor = """static void
+rmUpdateRaceEngine(unsigned ms, void *)
+{
+    LmRaceEngine().updateState(ms);
+}"""
+assert race_body.count(perf_anchor) == 1, "Missing pinned native race update callback"
+perf_code = """#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+namespace sd_mobile_perf {
+  static bool graphics_enabled = true;
+  static double sim_total_ms = 0, draw_total_ms = 0, gui_total_ms = 0, swap_total_ms = 0;
+  static unsigned sim_calls = 0, draw_frames = 0;
+  static double clock() { return emscripten_get_now(); }
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void wg_mobile_perf_set_graphics(int enabled) {
+  sd_mobile_perf::graphics_enabled = enabled != 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_graphics_enabled() {
+  return sd_mobile_perf::graphics_enabled ? 1 : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_sim_total_ms() {return sd_mobile_perf::sim_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_draw_total_ms() {return sd_mobile_perf::draw_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_gui_total_ms() {return sd_mobile_perf::gui_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_swap_total_ms() {return sd_mobile_perf::swap_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_sim_calls() {return (int)sd_mobile_perf::sim_calls;}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_draw_frames() {return (int)sd_mobile_perf::draw_frames;}
+#endif
+"""
+perf_replacement = perf_code + """static void
+rmUpdateRaceEngine(unsigned ms, void *)
+{
+#ifdef __EMSCRIPTEN__
+    const double started = sd_mobile_perf::clock();
+#endif
+    LmRaceEngine().updateState(ms);
+#ifdef __EMSCRIPTEN__
+    sd_mobile_perf::sim_total_ms += sd_mobile_perf::clock() - started;
+    ++sd_mobile_perf::sim_calls;
+#endif
+}"""
+race_body = race_body.replace(perf_anchor, perf_replacement, 1)
+# In the race display loop, guard ONLY 3D drawing. Never disable race
+# updates or original GUI state changes.
+display_anchor = """\tconst bool bUpdateGraphics =
+\t\tLmRaceEngine().outData()->_displayMode == RM_DISP_MODE_NORMAL
+\t\t&& !bPitRequested && LegacyMenu::self().graphicsEngine();"""
+assert race_body.count(display_anchor)==1, "Native race display guard changed"
+race_body=race_body.replace(display_anchor, """\tconst bool bUpdateGraphics =
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::graphics_enabled &&
+#endif
+\t\tLmRaceEngine().outData()->_displayMode == RM_DISP_MODE_NORMAL
+\t\t&& !bPitRequested && LegacyMenu::self().graphicsEngine();""",1)
+draw_anchor = "\t\tLegacyMenu::self().redrawGraphicsView(LmRaceEngine().outData()->s);"
+assert race_body.count(draw_anchor)==1, "Native graphics callback changed"
+race_body=race_body.replace(draw_anchor,"""#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+""" + draw_anchor + """
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::draw_total_ms += sd_mobile_perf::clock()-started;
+        ++sd_mobile_perf::draw_frames;
+#endif""",1)
+gui_anchor = """\tif (bUpdateGraphics || rmbMenuChanged)
+\t\tGfuiRedraw();"""
+assert race_body.count(gui_anchor)==1, "Native GUI callback changed"
+race_body=race_body.replace(gui_anchor,"""\tif (bUpdateGraphics || rmbMenuChanged) {
+#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+        GfuiRedraw();
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::gui_total_ms += sd_mobile_perf::clock()-started;
+#endif
+    }""",1)
+swap_anchor = """\tif (bUpdateGraphics || rmbMenuChanged)
+\t\tGfuiSwapBuffers();"""
+assert race_body.count(swap_anchor)==1, "Native swap callback changed"
+race_body=race_body.replace(swap_anchor,"""\tif (bUpdateGraphics || rmbMenuChanged) {
+#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+        GfuiSwapBuffers();
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::swap_total_ms += sd_mobile_perf::clock()-started;
+#endif
+    }""",1)
+
+# Browser WASM runs the original race update and legacy GL translator on one
+# browser thread. Unbounded wall-clock catch-up is a known spiral-of-death risk:
+# when one draw stalls for seconds, hundreds/thousands of .002s physics steps
+# can run before the next browser frame. Preserve EVERY executed original
+# simuv5 integration step, but drop excess WALL-CLOCK debt after a stall.
+# Under load the race therefore runs in slow motion rather than freezing.
+situation_source = source.parents[2] / "modules/racing/standardgame/racesituation.cpp"
+assert situation_source.exists(), f"Missing original race situation updater: {situation_source}"
+situation_body = situation_source.read_text()
+if "SPEED DREAMS MOBILE: bounded WASM catch-up" in situation_body:
+    raise SystemExit("WASM catch-up patch already applied")
+function_anchor = "void ReSituationUpdater::computeCurrentStep()"
+assert situation_body.count(function_anchor)==1, "Original computeCurrentStep changed"
+prefix = """// SPEED DREAMS MOBILE: bounded WASM catch-up (desktop native untouched).
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+static double sdm_dropped_wall_ms = 0;
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_dropped_wall_ms() {
+    return sdm_dropped_wall_ms;
+}
+#endif
+
+"""
+situation_body = situation_body.replace(function_anchor,prefix+function_anchor,1)
+clock_anchor="""        const double t = GfTimeClock();
+
+        while (pCurrReInfo->_reRunning && ((t - pCurrReInfo->_reCurTime) > RCM_MAX_DT_SIMU))
+            runOneStep(_fSimuTick);"""
+assert situation_body.count(clock_anchor)==1, "Original fixed timestep catch-up loop changed"
+clock_replacement="""        const double t = GfTimeClock();
+#ifdef __EMSCRIPTEN__
+        // Maximum old time to simulate after a blocking mobile WebGL frame.
+        // This is a wall-clock debt limit, NOT a coarser physics timestep.
+        constexpr double kMaxCatchUpSeconds = 0.080;
+        if (pCurrReInfo->_reRunning &&
+            (t - pCurrReInfo->_reCurTime) > kMaxCatchUpSeconds) {
+            const double dropped = (t - pCurrReInfo->_reCurTime) - kMaxCatchUpSeconds;
+            pCurrReInfo->_reCurTime += dropped;
+            sdm_dropped_wall_ms += dropped * 1000.0;
+        }
+#endif
+        while (pCurrReInfo->_reRunning && ((t - pCurrReInfo->_reCurTime) > RCM_MAX_DT_SIMU))
+            runOneStep(_fSimuTick);"""
+situation_body = situation_body.replace(clock_anchor,clock_replacement,1)
+
 source.write_text(body)
 race_source.write_text(race_body)
+situation_source.write_text(situation_body)
+print(f"Applied bounded WASM real-time catch-up: {situation_source}")
 print(f"Applied Speed Dreams Mobile native input bridge: {source}")
 print(f"Applied native pre-race confirmation to pinned LegacyMenu: {race_source}")
