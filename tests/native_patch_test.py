@@ -30,6 +30,26 @@ with tempfile.TemporaryDirectory() as t:
 static bool rmPreRacePause;
 static void RmReadyToRace(void*) {}
 static void
+rmUpdateRaceEngine(unsigned ms, void *)
+{
+    LmRaceEngine().updateState(ms);
+}
+static void
+rmRedisplay()
+{
+	const bool bUpdateGraphics =
+		LmRaceEngine().outData()->_displayMode == RM_DISP_MODE_NORMAL
+		&& !bPitRequested && LegacyMenu::self().graphicsEngine();
+	if (bUpdateGraphics)
+	{
+		LegacyMenu::self().redrawGraphicsView(LmRaceEngine().outData()->s);
+	}
+	if (bUpdateGraphics || rmbMenuChanged)
+		GfuiRedraw();
+	if (bUpdateGraphics || rmbMenuChanged)
+		GfuiSwapBuffers();
+}
+static void
 rmCloseCfg(void * /* dummy */)
 {
     RmReadyToRace(NULL);
@@ -42,6 +62,10 @@ rmCloseCfg(void * /* dummy */)
     assert 'wg_mobile_confirm_prerace' in race_after
     assert 'RmReadyToRace(nullptr)' in race_after
     assert 'rmScreenHandle && rmPreRacePause' in race_after
+    assert 'wg_mobile_perf_sim_total_ms' in race_after
+    assert 'wg_mobile_perf_draw_total_ms' in race_after
+    assert 'wg_mobile_perf_set_graphics' in race_after
+    assert 'sd_mobile_perf::graphics_enabled' in race_after
     assert 'wg_mobile_set_controls' in after
     assert 'sd_mobile::useControls(car)' in after
     assert 'sd_mobile::changeGear(car)' in after
