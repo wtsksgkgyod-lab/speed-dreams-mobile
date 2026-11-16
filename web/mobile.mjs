@@ -1,6 +1,7 @@
 import { MobileControls, PointerOwnership, clamp } from './core.mjs';
 import { PackManager } from './packs.mjs';
 import {InputPublisher, AdaptiveResolution, initialRenderScale, frameStats} from './perf.mjs';
+import {applyMobileGraphicsProfile} from './graphics-profile.mjs';
 
 const $ = id => document.getElementById(id);
 const canvas = $('canvas');
@@ -16,6 +17,10 @@ const isIOS=/iPhone|iPad|iPod/.test(navigator.userAgent) ||
 // default, rather than treating unknown device memory as unlimited.
 // ?full=1 retains the previous rendering/audio policy for comparison.
 const lowMemoryMode=(smallTouchScreen||isIOS)&&params.get('full')!=='1';
+// Direct mobile visual preset modifies original graph.xml before native main.
+// ?profile=original is a full-graphics A/B control, not a different physics engine.
+const graphicsProfile=params.get('profile')==='original'?'original':
+  (lowMemoryMode||params.get('profile')==='lite')?'lite':'original';
 const startupStorageKey='sdm.boot.stage.v1';
 let startupHistory=[];
 let startupStage='ready';
@@ -35,6 +40,8 @@ const resolutionGovernor=new AdaptiveResolution(renderScale);
 let qualityMode='auto', lastFrame=performance.now();
 let totalFrames=0, secondFrames=0, secondStart=performance.now();
 let frameSample=[], fps=0, toastTimeout;
+const perfHistory=[];
+let latestPerf=null,previousPerf=null,simOnlyMode=false;
 let orientation=window.innerWidth>window.innerHeight?'landscape':'portrait';
 
 function message(value) { $('status-text').textContent = value; }
@@ -238,6 +245,14 @@ function buildNativeAPI(mod) {
     resize:wrap('wg_resize',null,[num,num]),
     preraceWaiting:wrap('wg_mobile_prerace_waiting',num,[]),
     confirmPrerace:wrap('wg_mobile_confirm_prerace',num,[]),
+    perfSim:wrap('wg_mobile_perf_sim_total_ms',num,[]),
+    perfDraw:wrap('wg_mobile_perf_draw_total_ms',num,[]),
+    perfGui:wrap('wg_mobile_perf_gui_total_ms',num,[]),
+    perfSwap:wrap('wg_mobile_perf_swap_total_ms',num,[]),
+    perfSimCalls:wrap('wg_mobile_perf_sim_calls',num,[]),
+    perfDrawFrames:wrap('wg_mobile_perf_draw_frames',num,[]),
+    perfGraphicsEnabled:wrap('wg_mobile_perf_graphics_enabled',num,[]),
+    perfSetGraphics:wrap('wg_mobile_perf_set_graphics',null,[num]),
   };
 }
 function updateHUD() {
@@ -254,7 +269,7 @@ function instrumentationFrame(time) {
   if(delta>0&&delta<3000){frameSample.push(delta);if(frameSample.length>180)frameSample.shift();}
   totalFrames++;secondFrames++;lastFrame=time;
   if(time-secondStart>1000){
-    fps=Math.round(secondFrames*1000/(time-secondStart));
+    fps=Number((secondFrames*1000/(time-secondStart)).toFixed(2));
     const sampled=frameStats(frameSample);
     if(debug){
       const heap=wasmModule?.HEAPU8?.buffer?.byteLength;
@@ -326,6 +341,8 @@ async function start(mode='menu') {
     markStartup('starter_pack_loading');
     await packManager.load('start');
     markStartup('starter_pack_ready');
+    const profile=applyMobileGraphicsProfile(FS,{enabled:graphicsProfile==='lite'});
+    markStartup('graphics_profile',profile.applied?'lite':'original');
     // Speed Dreams' music is optional for the initial race. Holding a second
     // ~23 MiB compressed asset and its decoded files alongside the ~84 MiB
     // starter pack has been a likely iOS memory pressure point. Leave music
@@ -405,7 +422,8 @@ prepare();
 function diagnosticReport() {
   const mod=wasmModule;
   return JSON.stringify({
-    build:'ios-startup-guard-v1',
+    build:'safari-native-frame-profiler-v1',
+    graphicsProfile, frameStats:latestPerf, history:perfHistory.slice(-16),
     stage:startupStage,
     previous:lastStartup(),
     latest:startupHistory,
@@ -420,6 +438,80 @@ function diagnosticReport() {
     packs:packManager?.getMetrics()||[]
   },null,2);
 }
+
+function capturePerf(){
+  if(!engineStarted||!native)return null;
+  const time=performance.now();
+  const total={
+    simMs:native.perfSim(),drawMs:native.perfDraw(),guiMs:native.perfGui(),
+    swapMs:native.perfSwap(),simCalls:native.perfSimCalls(),drawFrames:native.perfDrawFrames()
+  };
+  const before=previousPerf;
+  previousPerf={time,total};
+  if(!before)return null;
+  const elapsedMs=Math.max(1,time-before.time), delta={};
+  for(const key of Object.keys(total))delta[key]=Math.max(0,total[key]-before.total[key]);
+  const drawFps=delta.drawFrames*1000/elapsedMs;
+  const result={
+    atMs:Math.round(time),elapsedMs:Math.round(elapsedMs),
+    renderEnabled:native.perfGraphicsEnabled()===1,
+    drawFPS:Number(drawFps.toFixed(2)),
+    rafFPS:fps,
+    simPercent:Number((delta.simMs/elapsedMs*100).toFixed(1)),
+    drawPercent:Number((delta.drawMs/elapsedMs*100).toFixed(1)),
+    guiPercent:Number((delta.guiMs/elapsedMs*100).toFixed(1)),
+    swapPercent:Number((delta.swapMs/elapsedMs*100).toFixed(1)),
+    simMsPerCall:Number((delta.simMs/Math.max(1,delta.simCalls)).toFixed(2)),
+    drawMsPerFrame:Number((delta.drawMs/Math.max(1,delta.drawFrames)).toFixed(1)),
+    swapMsPerFrame:Number((delta.swapMs/Math.max(1,delta.drawFrames)).toFixed(1)),
+    wasmHeapMiB:wasmModule?.HEAPU8?Math.round(wasmModule.HEAPU8.length/1048576):null
+  };
+  latestPerf=result;perfHistory.push(result);if(perfHistory.length>48)perfHistory.shift();
+  const lines=[
+    'NATIVE 3D: '+result.drawFPS.toFixed(2)+' fps',
+    'Browser RAF: '+result.rafFPS.toFixed(2)+' fps',
+    'Sim / AI CPU: '+result.simPercent+'% time',
+    '3D drawing CPU: '+result.drawPercent+'% time',
+    'GUI: '+result.guiPercent+'% time  GPU submit: '+result.swapPercent+'% time',
+    'Draw avg: '+result.drawMsPerFrame+'ms/frame',
+    'Sim avg: '+result.simMsPerCall+'ms/tick',
+    'Wasm heap: '+result.wasmHeapMiB+'MiB',
+    'Preset: '+graphicsProfile
+  ];
+  $('perf-readings').textContent=lines.join('\n');
+  return result;
+}
+setInterval(capturePerf,2000);
+$('perf-toggle').addEventListener('click',()=>{
+  $('perf-panel').hidden=!$('perf-panel').hidden;
+  capturePerf();
+});
+$('perf-copy').addEventListener('click',async ()=>{
+  const text=diagnosticReport();
+  try{
+    await navigator.clipboard.writeText(text);
+    toast('性能レポートをコピーしました。チャットに貼り付けてください。');
+  }catch{
+    $('perf-readings').textContent=text;
+    toast('コピーできない場合は表示された文字を選択してください。');
+  }
+});
+// Short isolated A/B. The simulator and input remain active, but the legacy
+// 3D renderer is skipped for 8 seconds and restored automatically.
+$('perf-isolate').addEventListener('click',()=>{
+  if(!native||!engineStarted||simOnlyMode)return;
+  simOnlyMode=true;capturePerf();native.perfSetGraphics(0);
+  const b=$('perf-isolate');b.disabled=true;b.textContent='3D描画を診断中…（8秒）';
+  toast('診断中の8秒間は3D描画が停止します。操作はしないでください。',true);
+  setTimeout(()=>{
+    try{capturePerf();native?.perfSetGraphics(1);}
+    finally{
+      b.disabled=false;b.textContent='3D描画を8秒停止して比較';
+      simOnlyMode=false;toast('描画を復元しました。診断をコピーしてください。');
+    }
+  },8000);
+});
+
 $('copy-report').addEventListener('click',async ()=>{
   const report=diagnosticReport();
   try {await navigator.clipboard.writeText(report);toast('診断情報をコピーしました。チャットに貼り付けてください。');}
