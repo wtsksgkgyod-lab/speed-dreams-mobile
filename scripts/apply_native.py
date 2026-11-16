@@ -118,6 +118,98 @@ extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_confirm_prerace()
 """
 race_body = race_body.replace(race_anchor, race_bridge + race_anchor, 1)
 
+# Profile the real race loop, not the DOM requestAnimationFrame proxy.
+# This lets actual Safari hardware distinguish sim/AI CPU from native PLIB/GL4ES
+# draw calls and browser GPU submission. The optional no-render trial never
+# changes physics and is automatically restored by the browser diagnostic UI.
+perf_anchor = """static void
+rmUpdateRaceEngine(unsigned ms, void *)
+{
+    LmRaceEngine().updateState(ms);
+}"""
+assert race_body.count(perf_anchor) == 1, "Missing pinned native race update callback"
+perf_code = """#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+namespace sd_mobile_perf {
+  static bool graphics_enabled = true;
+  static double sim_total_ms = 0, draw_total_ms = 0, gui_total_ms = 0, swap_total_ms = 0;
+  static unsigned sim_calls = 0, draw_frames = 0;
+  static double clock() { return emscripten_get_now(); }
+}
+extern "C" EMSCRIPTEN_KEEPALIVE void wg_mobile_perf_set_graphics(int enabled) {
+  sd_mobile_perf::graphics_enabled = enabled != 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_graphics_enabled() {
+  return sd_mobile_perf::graphics_enabled ? 1 : 0;
+}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_sim_total_ms() {return sd_mobile_perf::sim_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_draw_total_ms() {return sd_mobile_perf::draw_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_gui_total_ms() {return sd_mobile_perf::gui_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_swap_total_ms() {return sd_mobile_perf::swap_total_ms;}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_sim_calls() {return (int)sd_mobile_perf::sim_calls;}
+extern "C" EMSCRIPTEN_KEEPALIVE int wg_mobile_perf_draw_frames() {return (int)sd_mobile_perf::draw_frames;}
+#endif
+"""
+perf_replacement = perf_code + """static void
+rmUpdateRaceEngine(unsigned ms, void *)
+{
+#ifdef __EMSCRIPTEN__
+    const double started = sd_mobile_perf::clock();
+#endif
+    LmRaceEngine().updateState(ms);
+#ifdef __EMSCRIPTEN__
+    sd_mobile_perf::sim_total_ms += sd_mobile_perf::clock() - started;
+    ++sd_mobile_perf::sim_calls;
+#endif
+}"""
+race_body = race_body.replace(perf_anchor, perf_replacement, 1)
+# In the race display loop, guard ONLY 3D drawing. Never disable race
+# updates or original GUI state changes.
+display_anchor = """\tconst bool bUpdateGraphics =
+\t\tLmRaceEngine().outData()->_displayMode == RM_DISP_MODE_NORMAL
+\t\t&& !bPitRequested && LegacyMenu::self().graphicsEngine();"""
+assert race_body.count(display_anchor)==1, "Native race display guard changed"
+race_body=race_body.replace(display_anchor, """\tconst bool bUpdateGraphics =
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::graphics_enabled &&
+#endif
+\t\tLmRaceEngine().outData()->_displayMode == RM_DISP_MODE_NORMAL
+\t\t&& !bPitRequested && LegacyMenu::self().graphicsEngine();""",1)
+draw_anchor = "\t\tLegacyMenu::self().redrawGraphicsView(LmRaceEngine().outData()->s);"
+assert race_body.count(draw_anchor)==1, "Native graphics callback changed"
+race_body=race_body.replace(draw_anchor,"""#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+""" + draw_anchor + """
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::draw_total_ms += sd_mobile_perf::clock()-started;
+        ++sd_mobile_perf::draw_frames;
+#endif""",1)
+gui_anchor = """\tif (bUpdateGraphics || rmbMenuChanged)
+\t\tGfuiRedraw();"""
+assert race_body.count(gui_anchor)==1, "Native GUI callback changed"
+race_body=race_body.replace(gui_anchor,"""\tif (bUpdateGraphics || rmbMenuChanged) {
+#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+        GfuiRedraw();
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::gui_total_ms += sd_mobile_perf::clock()-started;
+#endif
+    }""",1)
+swap_anchor = """\tif (bUpdateGraphics || rmbMenuChanged)
+\t\tGfuiSwapBuffers();"""
+assert race_body.count(swap_anchor)==1, "Native swap callback changed"
+race_body=race_body.replace(swap_anchor,"""\tif (bUpdateGraphics || rmbMenuChanged) {
+#ifdef __EMSCRIPTEN__
+        const double started = sd_mobile_perf::clock();
+#endif
+        GfuiSwapBuffers();
+#ifdef __EMSCRIPTEN__
+        sd_mobile_perf::swap_total_ms += sd_mobile_perf::clock()-started;
+#endif
+    }""",1)
+
 source.write_text(body)
 race_source.write_text(race_body)
 print(f"Applied Speed Dreams Mobile native input bridge: {source}")
