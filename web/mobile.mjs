@@ -251,6 +251,7 @@ function buildNativeAPI(mod) {
     perfSwap:wrap('wg_mobile_perf_swap_total_ms',num,[]),
     perfSimCalls:wrap('wg_mobile_perf_sim_calls',num,[]),
     perfDrawFrames:wrap('wg_mobile_perf_draw_frames',num,[]),
+    perfDropped:wrap('wg_mobile_perf_dropped_wall_ms',num,[]),
     perfGraphicsEnabled:wrap('wg_mobile_perf_graphics_enabled',num,[]),
     perfSetGraphics:wrap('wg_mobile_perf_set_graphics',null,[num]),
   };
@@ -444,7 +445,7 @@ function capturePerf(){
   const time=performance.now();
   const total={
     simMs:native.perfSim(),drawMs:native.perfDraw(),guiMs:native.perfGui(),
-    swapMs:native.perfSwap(),simCalls:native.perfSimCalls(),drawFrames:native.perfDrawFrames()
+    swapMs:native.perfSwap(),simCalls:native.perfSimCalls(),drawFrames:native.perfDrawFrames(),droppedWallMs:native.perfDropped()
   };
   const before=previousPerf;
   previousPerf={time,total};
@@ -461,6 +462,7 @@ function capturePerf(){
     drawPercent:Number((delta.drawMs/elapsedMs*100).toFixed(1)),
     guiPercent:Number((delta.guiMs/elapsedMs*100).toFixed(1)),
     swapPercent:Number((delta.swapMs/elapsedMs*100).toFixed(1)),
+    droppedWallMs:Math.round(delta.droppedWallMs),
     simMsPerCall:Number((delta.simMs/Math.max(1,delta.simCalls)).toFixed(2)),
     drawMsPerFrame:Number((delta.drawMs/Math.max(1,delta.drawFrames)).toFixed(1)),
     swapMsPerFrame:Number((delta.swapMs/Math.max(1,delta.drawFrames)).toFixed(1)),
@@ -475,6 +477,7 @@ function capturePerf(){
     'GUI: '+result.guiPercent+'% time  GPU submit: '+result.swapPercent+'% time',
     'Draw avg: '+result.drawMsPerFrame+'ms/frame',
     'Sim avg: '+result.simMsPerCall+'ms/tick',
+    'Skipped wall-time: '+result.droppedWallMs+'ms / sample',
     'Wasm heap: '+result.wasmHeapMiB+'MiB',
     'Preset: '+graphicsProfile
   ];
