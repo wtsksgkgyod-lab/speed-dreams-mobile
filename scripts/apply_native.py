@@ -210,7 +210,54 @@ race_body=race_body.replace(swap_anchor,"""\tif (bUpdateGraphics || rmbMenuChang
 #endif
     }""",1)
 
+# Browser WASM runs the original race update and legacy GL translator on one
+# browser thread. Unbounded wall-clock catch-up is a known spiral-of-death risk:
+# when one draw stalls for seconds, hundreds/thousands of .002s physics steps
+# can run before the next browser frame. Preserve EVERY executed original
+# simuv5 integration step, but drop excess WALL-CLOCK debt after a stall.
+# Under load the race therefore runs in slow motion rather than freezing.
+situation_source = source.parents[2] / "modules/racing/standardgame/racesituation.cpp"
+assert situation_source.exists(), f"Missing original race situation updater: {situation_source}"
+situation_body = situation_source.read_text()
+if "SPEED DREAMS MOBILE: bounded WASM catch-up" in situation_body:
+    raise SystemExit("WASM catch-up patch already applied")
+function_anchor = "void ReSituationUpdater::computeCurrentStep()"
+assert situation_body.count(function_anchor)==1, "Original computeCurrentStep changed"
+prefix = """// SPEED DREAMS MOBILE: bounded WASM catch-up (desktop native untouched).
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+static double sdm_dropped_wall_ms = 0;
+extern "C" EMSCRIPTEN_KEEPALIVE double wg_mobile_perf_dropped_wall_ms() {
+    return sdm_dropped_wall_ms;
+}
+#endif
+
+"""
+situation_body = situation_body.replace(function_anchor,prefix+function_anchor,1)
+clock_anchor="""        const double t = GfTimeClock();
+
+        while (pCurrReInfo->_reRunning && ((t - pCurrReInfo->_reCurTime) > RCM_MAX_DT_SIMU))
+            runOneStep(_fSimuTick);"""
+assert situation_body.count(clock_anchor)==1, "Original fixed timestep catch-up loop changed"
+clock_replacement="""        const double t = GfTimeClock();
+#ifdef __EMSCRIPTEN__
+        // Maximum old time to simulate after a blocking mobile WebGL frame.
+        // This is a wall-clock debt limit, NOT a coarser physics timestep.
+        constexpr double kMaxCatchUpSeconds = 0.080;
+        if (pCurrReInfo->_reRunning &&
+            (t - pCurrReInfo->_reCurTime) > kMaxCatchUpSeconds) {
+            const double dropped = (t - pCurrReInfo->_reCurTime) - kMaxCatchUpSeconds;
+            pCurrReInfo->_reCurTime += dropped;
+            sdm_dropped_wall_ms += dropped * 1000.0;
+        }
+#endif
+        while (pCurrReInfo->_reRunning && ((t - pCurrReInfo->_reCurTime) > RCM_MAX_DT_SIMU))
+            runOneStep(_fSimuTick);"""
+situation_body = situation_body.replace(clock_anchor,clock_replacement,1)
+
 source.write_text(body)
 race_source.write_text(race_body)
+situation_source.write_text(situation_body)
+print(f"Applied bounded WASM real-time catch-up: {situation_source}")
 print(f"Applied Speed Dreams Mobile native input bridge: {source}")
 print(f"Applied native pre-race confirmation to pinned LegacyMenu: {race_source}")
