@@ -34,9 +34,19 @@
         <button id="manual" type="button" aria-label="Transmission">AT</button>
         <button id="touch-toggle" type="button" aria-pressed="false">TOUCH OFF</button>
         <button id="quality" type="button" aria-label="Rendering quality">AUTO</button>
+        <button id="perf-toggle" type="button" aria-label="Open performance diagnostics">PERF</button>
         <button id="retry-assets" type="button" hidden aria-label="Retry failed downloads">RETRY DATA</button>
       </div>
     </div>
+    <aside id="perf-panel" hidden aria-label="Native rendering and simulation diagnostics">
+      <strong>FRAME PROFILER · SPEED DREAMS</strong>
+      <pre id="perf-readings">レース中の実測値を収集中…</pre>
+      <div class="perf-actions">
+        <button id="perf-isolate" type="button">3D描画を8秒停止して比較</button>
+        <button id="perf-copy" type="button">診断をコピー</button>
+      </div>
+      <small>原作C++の処理時間。3D描画停止中は画面が更新されません。物理・AIは変更しません。</small>
+    </aside>
     <div id="race-start-help" hidden>
       <button id="race-confirm" type="button" aria-label="Confirm race start">START RACE ▶</button>
       <small>原作の ENTER 操作を送信します。スタート待ちの時に押してください。</small>
